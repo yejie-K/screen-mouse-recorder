@@ -1,0 +1,19 @@
+{
+  "video_fps": 30,
+  "sample_fps": 30,
+  "output_root": "sessions",
+  "session_name": "",
+  "record_outside_region": true,
+  "record_mouse_samples": true,
+  "record_click_events": true,
+  "record_wheel_events": true,
+  "record_drag_events": true,
+  "show_sync_marker": false,
+  "show_recording_status_banner": true,
+  "startup_countdown_seconds": 3,
+  "click_max_duration_ms": 500,
+  "click_max_distance_px": 8,
+  "drag_min_distance_px": 10,
+  "double_click_window_ms": 500,
+  "ffmpeg_path": null
+}

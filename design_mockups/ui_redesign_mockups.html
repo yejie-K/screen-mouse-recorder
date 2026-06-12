@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Screen Mouse Recorder UI Mockups</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #dfe5ea;
+      color: #17212b;
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      letter-spacing: 0;
+    }
+    .stage {
+      display: grid;
+      gap: 32px;
+      padding: 32px;
+    }
+    .screen {
+      width: 1220px;
+      height: 780px;
+      overflow: hidden;
+      background: #f3f6f8;
+      border: 1px solid #c9d2da;
+      border-radius: 8px;
+      box-shadow: 0 12px 30px rgba(31, 45, 61, 0.14);
+      position: relative;
+    }
+    .topbar {
+      height: 60px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 20px;
+      border-bottom: 1px solid #d9e1e7;
+      background: #fbfcfd;
+    }
+    .brand {
+      font-size: 18px;
+      font-weight: 700;
+      min-width: 230px;
+    }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .tab {
+      min-width: 86px;
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 14px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      color: #50616f;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .tab.active {
+      color: #101820;
+      background: #edf4fb;
+      border-color: #c9d8e8;
+    }
+    .status-pill {
+      margin-left: auto;
+      min-width: 90px;
+      height: 30px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      background: #e5f5ec;
+      color: #13723b;
+      border: 1px solid #bee7cf;
+    }
+    .workspace {
+      height: 720px;
+      display: grid;
+      grid-template-columns: 288px 1fr 342px;
+      gap: 14px;
+      padding: 14px;
+    }
+    .panel {
+      background: #ffffff;
+      border: 1px solid #d7e0e7;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .panel.pad { padding: 14px; }
+    .panel-title {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      border-bottom: 1px solid #e5ebf0;
+      color: #1d2a35;
+      font-size: 14px;
+      font-weight: 700;
+      background: #fbfcfd;
+    }
+    .muted { color: #657583; font-size: 12px; }
+    .step {
+      display: grid;
+      grid-template-columns: 26px 1fr;
+      gap: 10px;
+      padding: 13px 0;
+      border-bottom: 1px solid #edf1f4;
+    }
+    .step:last-child { border-bottom: 0; }
+    .num {
+      width: 24px;
+      height: 24px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #edf4fb;
+      color: #1f6fb2;
+      font-weight: 800;
+      font-size: 12px;
+    }
+    .step h4 { margin: 0 0 5px; font-size: 14px; }
+    .step p { margin: 0 0 10px; color: #657583; font-size: 12px; line-height: 1.45; }
+    .button-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn {
+      height: 32px;
+      min-width: 72px;
+      padding: 0 12px;
+      border-radius: 8px;
+      border: 1px solid #cfd9e2;
+      background: #ffffff;
+      color: #24313c;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .btn.primary { background: #1f9d55; border-color: #1f9d55; color: #ffffff; }
+    .btn.blue { background: #1f6fb2; border-color: #1f6fb2; color: #ffffff; }
+    .btn.warn { background: #f6c758; border-color: #e1ad28; color: #2b260b; }
+    .btn.danger { background: #d94848; border-color: #d94848; color: #ffffff; }
+    .record-center {
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 14px;
+    }
+    .timer-card {
+      min-height: 292px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      background: #ffffff;
+      border: 1px solid #d7e0e7;
+      border-radius: 8px;
+    }
+    .timer {
+      font-family: Consolas, "SFMono-Regular", monospace;
+      font-size: 58px;
+      font-weight: 800;
+      color: #111b24;
+      line-height: 1;
+    }
+    .banner {
+      min-width: 260px;
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: #eef3f6;
+      color: #4f5f6c;
+      border: 1px solid #d9e2e9;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .transport {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+    }
+    .transport .round {
+      width: 76px;
+      height: 54px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 24px;
+      font-weight: 900;
+      border: 0;
+    }
+    .round.play { background: #1f9d55; }
+    .round.pause { background: #e3b242; color: #211b08; }
+    .round.stop { background: #d94848; }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .metric {
+      min-height: 76px;
+      padding: 12px;
+      border: 1px solid #d7e0e7;
+      background: #ffffff;
+      border-radius: 8px;
+    }
+    .metric .value { font-size: 23px; font-weight: 800; margin-bottom: 5px; }
+    .metric .label { color: #657583; font-size: 12px; }
+    .session-strip {
+      padding: 14px;
+      background: #ffffff;
+      border: 1px solid #d7e0e7;
+      border-radius: 8px;
+    }
+    .session-strip h4 { margin: 0 0 8px; font-size: 14px; }
+    .session-grid {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+    }
+    .path {
+      height: 34px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #f5f8fa;
+      border: 1px solid #dce4eb;
+      color: #40515f;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .settings-grid {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+    }
+    .field {
+      display: grid;
+      grid-template-columns: 82px 1fr auto auto;
+      gap: 8px;
+      align-items: center;
+    }
+    .field label { font-size: 13px; color: #33424e; font-weight: 650; }
+    .fake-input {
+      height: 32px;
+      border-radius: 8px;
+      border: 1px solid #d6e0e8;
+      background: #f8fafb;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      color: #50616f;
+      font-size: 12px;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .segmented {
+      display: flex;
+      gap: 6px;
+      padding: 4px;
+      border: 1px solid #d7e0e7;
+      background: #f4f7f9;
+      border-radius: 8px;
+    }
+    .segmented span {
+      flex: 1;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      color: #657583;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .segmented span.on { background: #ffffff; color: #17212b; border: 1px solid #d7e0e7; }
+    .checks {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .check {
+      min-height: 48px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid #d7e0e7;
+      background: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #2d3a45;
+      font-weight: 650;
+    }
+    .check .box {
+      width: 17px;
+      height: 17px;
+      border-radius: 5px;
+      background: #1f6fb2;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 12px;
+      flex: 0 0 auto;
+    }
+    .advanced {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .spin {
+      height: 36px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #d7e0e7;
+      background: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #2b3944;
+      font-size: 13px;
+    }
+    .spin strong { font-size: 14px; }
+    .analysis-layout {
+      height: 720px;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 14px;
+      padding: 14px;
+    }
+    .analysis-main {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 14px;
+    }
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+    }
+    .output-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      padding: 14px;
+    }
+    .file-row {
+      height: 62px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid #d7e0e7;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+    .file-row h4 { margin: 0 0 4px; font-size: 13px; }
+    .file-row p { margin: 0; color: #657583; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ok {
+      width: 44px;
+      height: 24px;
+      border-radius: 7px;
+      background: #1f9d55;
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .preview-grid {
+      display: grid;
+      grid-template-columns: 1fr 306px;
+      gap: 14px;
+      height: 100%;
+      padding: 14px;
+    }
+    .chart-area {
+      border-radius: 8px;
+      border: 1px solid #d7e0e7;
+      background: #ffffff;
+      padding: 14px;
+      overflow: hidden;
+    }
+    .timeline {
+      height: 210px;
+      display: flex;
+      align-items: end;
+      gap: 7px;
+      padding: 20px 16px 16px;
+      border-radius: 8px;
+      background: #f7fafc;
+      border: 1px solid #e1e8ee;
+    }
+    .bar { flex: 1; min-width: 8px; background: #9ecbe8; border-radius: 4px 4px 0 0; }
+    .heatmap-preview {
+      height: 438px;
+      border-radius: 8px;
+      background: #ffffff;
+      border: 1px solid #d7e0e7;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .heatmap-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: top center;
+    }
+    .concept-tag {
+      position: absolute;
+      right: 18px;
+      bottom: 12px;
+      color: #71808d;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    /* Concept B */
+    .b {
+      background: #eef1f0;
+      border-color: #bfc9c6;
+    }
+    .b .topbar {
+      height: 64px;
+      background: #182029;
+      border-bottom-color: #182029;
+      color: #f7fafb;
+    }
+    .b .brand { color: #f7fafb; }
+    .b .tab { color: #a9b5bd; background: transparent; }
+    .b .tab.active { color: #f7fafb; background: #26313c; border-color: #354554; }
+    .b .status-pill { background: #e7f6ef; color: #106f3b; border-color: #bde7cf; }
+    .b .workspace, .b .analysis-layout { background: #eef1f0; }
+    .b .panel,
+    .b .timer-card,
+    .b .metric,
+    .b .session-strip,
+    .b .chart-area,
+    .b .heatmap-preview,
+    .b .file-row {
+      background: #fcfdfb;
+      border-color: #cfd9d6;
+    }
+    .b .panel-title {
+      background: #fcfdfb;
+      border-bottom-color: #e1e7e4;
+      color: #17212b;
+    }
+    .b .num,
+    .b .tablite {
+      background: #e8f0ee;
+      color: #285d50;
+    }
+    .b .btn.blue { background: #285d50; border-color: #285d50; }
+    .b .round.play { background: #237a4c; }
+    .b .round.pause { background: #e7b84e; }
+    .b .round.stop { background: #c94c4c; }
+    .b .check .box { background: #285d50; }
+    .b .timer { color: #121a21; }
+    .b .timeline .bar { background: #8fbfb3; }
+  </style>
+</head>
+<body>
+  <div class="stage">
+    <section class="screen" id="refined-record">
+      <div class="topbar">
+        <div class="brand">Screen Mouse Recorder</div>
+        <div class="tabs">
+          <div class="tab active">录制</div>
+          <div class="tab">分析处理</div>
+        </div>
+        <div class="status-pill">就绪</div>
+      </div>
+      <div class="workspace">
+        <aside class="panel pad">
+          <div class="step">
+            <div class="num">1</div>
+            <div>
+              <h4>选择录制区域</h4>
+              <p>当前区域 460 x 866，坐标对应检查已通过。</p>
+              <div class="button-row">
+                <div class="btn blue">选择区域</div>
+                <div class="btn">对应检查</div>
+              </div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <div>
+              <h4>确认记录范围</h4>
+              <p>本地录制屏幕区域与鼠标活动，不记录键盘输入和音频。</p>
+              <div class="button-row">
+                <div class="btn">隐私确认</div>
+              </div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <div>
+              <h4>开始长时间测试</h4>
+              <p>输出目录可写，FFmpeg 已就绪，下一步可开始录制。</p>
+            </div>
+          </div>
+        </aside>
+        <main class="record-center">
+          <div class="timer-card">
+            <div class="timer">00:00:00</div>
+            <div class="banner">未开始 · 等待区域确认</div>
+            <div class="transport">
+              <div class="round play">▶</div>
+              <div class="round pause">Ⅱ</div>
+              <div class="round stop">■</div>
+            </div>
+          </div>
+          <div class="metrics">
+            <div class="metric"><div class="value">0</div><div class="label">视频段</div></div>
+            <div class="metric"><div class="value">0</div><div class="label">暂停次数</div></div>
+            <div class="metric"><div class="value">OK</div><div class="label">鼠标映射</div></div>
+          </div>
+          <div class="session-strip">
+            <div class="session-grid">
+              <div>
+                <h4>最近 Session</h4>
+                <div class="path">D:\screen_capture\sessions\20260610_163422</div>
+              </div>
+              <div class="button-row">
+                <div class="btn">文件夹</div>
+                <div class="btn">视频</div>
+                <div class="btn">表格</div>
+              </div>
+            </div>
+          </div>
+        </main>
+        <aside class="panel">
+          <div class="panel-title">记录设置 <span class="muted">自动保存</span></div>
+          <div class="settings-grid">
+            <div class="field">
+              <label>输出目录</label>
+              <div class="fake-input">recordings</div>
+              <div class="btn">浏览</div>
+              <div class="btn">打开</div>
+            </div>
+            <div class="field">
+              <label>Session</label>
+              <div class="fake-input" style="grid-column: span 3;">first_long_test</div>
+            </div>
+            <div class="segmented">
+              <span class="on">记录选项</span>
+              <span>高级参数</span>
+            </div>
+            <div class="checks">
+              <div class="check"><span class="box">✓</span>轨迹采样</div>
+              <div class="check"><span class="box">✓</span>点击识别</div>
+              <div class="check"><span class="box">✓</span>滚轮记录</div>
+              <div class="check"><span class="box">✓</span>拖拽识别</div>
+              <div class="check"><span class="box">✓</span>状态提示栏</div>
+              <div class="check"><span class="box">✓</span>区域外活动</div>
+            </div>
+            <div class="advanced">
+              <div class="spin"><span>视频 FPS</span><strong>30</strong></div>
+              <div class="spin"><span>采样 Hz</span><strong>30</strong></div>
+              <div class="spin"><span>点击间隔</span><strong>500</strong></div>
+              <div class="spin"><span>拖拽距离</span><strong>10</strong></div>
+            </div>
+          </div>
+        </aside>
+      </div>
+      <div class="concept-tag">方案 A · 精致浅色工作台 · 录制页</div>
+    </section>
+
+    <section class="screen" id="refined-analysis">
+      <div class="topbar">
+        <div class="brand">Screen Mouse Recorder</div>
+        <div class="tabs">
+          <div class="tab">录制</div>
+          <div class="tab active">分析处理</div>
+        </div>
+        <div class="status-pill">已生成</div>
+      </div>
+      <div class="analysis-layout">
+        <aside class="panel">
+          <div class="panel-title">导入与检查 <span class="muted">xlsx / session</span></div>
+          <div class="settings-grid">
+            <div>
+              <div class="muted" style="margin-bottom: 6px;">输入文件</div>
+              <div class="path">sessions\20260610_163422\mouse_summary.xlsx</div>
+            </div>
+            <div class="button-row">
+              <div class="btn blue">选择 xlsx</div>
+              <div class="btn">选择文件夹</div>
+            </div>
+            <div>
+              <div class="muted" style="margin-bottom: 6px;">输出目录</div>
+              <div class="path">sessions\20260610_163422\analysis_output</div>
+            </div>
+            <div class="metric-row" style="grid-template-columns: 1fr 1fr;">
+              <div class="metric"><div class="value">1382</div><div class="label">点击</div></div>
+              <div class="metric"><div class="value">OK</div><div class="label">元数据</div></div>
+            </div>
+            <div class="metric-row" style="grid-template-columns: 1fr 1fr;">
+              <div class="metric"><div class="value">2.1</div><div class="label">时长分钟</div></div>
+              <div class="metric"><div class="value">40x75</div><div class="label">网格</div></div>
+            </div>
+            <div class="button-row">
+              <div class="btn primary">生成分析报告</div>
+              <div class="btn">打开输出</div>
+            </div>
+          </div>
+        </aside>
+        <main class="analysis-main">
+          <div class="metric-row">
+            <div class="metric"><div class="value">1896</div><div class="label">事件</div></div>
+            <div class="metric"><div class="value">3650</div><div class="label">采样</div></div>
+            <div class="metric"><div class="value">1382</div><div class="label">点击</div></div>
+            <div class="metric"><div class="value">80.4%</div><div class="label">底部点击</div></div>
+            <div class="metric"><div class="value">56.7</div><div class="label">最大密度</div></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">分析输出 <span class="muted">圆圈热力图预览</span></div>
+            <div class="preview-grid">
+              <div class="chart-area">
+                <div class="panel-title" style="height: 32px; padding: 0; border: 0; background: transparent;">每分钟事件节奏</div>
+                <div class="timeline">
+                  <div class="bar" style="height: 24%;"></div><div class="bar" style="height: 32%;"></div><div class="bar" style="height: 42%;"></div>
+                  <div class="bar" style="height: 62%;"></div><div class="bar" style="height: 85%;"></div><div class="bar" style="height: 78%;"></div>
+                  <div class="bar" style="height: 56%;"></div><div class="bar" style="height: 44%;"></div><div class="bar" style="height: 34%;"></div>
+                </div>
+                <div class="output-list" style="grid-template-columns: 1fr 1fr; padding: 14px 0 0;">
+                  <div class="file-row"><div><h4>中文分析报告</h4><p>mouse_behavior_report.xlsx</p></div><span class="ok">OK</span></div>
+                  <div class="file-row"><div><h4>圆圈热力图</h4><p>click_heatmap_circle.png</p></div><span class="ok">OK</span></div>
+                  <div class="file-row"><div><h4>点击位置分布</h4><p>click_scatter.png</p></div><span class="ok">OK</span></div>
+                  <div class="file-row"><div><h4>拖拽时长分布</h4><p>drag_durations.png</p></div><span class="ok">OK</span></div>
+                </div>
+              </div>
+              <div class="heatmap-preview">
+                <img src="file:///D:/screen_capture/sessions/20260610_163422/analysis_output/click_heatmap_circle.png" alt="圆圈热力图" />
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+      <div class="concept-tag">方案 A · 精致浅色工作台 · 分析页</div>
+    </section>
+
+    <section class="screen b" id="premium-record">
+      <div class="topbar">
+        <div class="brand">Screen Mouse Recorder</div>
+        <div class="tabs">
+          <div class="tab active">录制控制台</div>
+          <div class="tab">分析工作台</div>
+        </div>
+        <div class="status-pill">READY</div>
+      </div>
+      <div class="workspace">
+        <aside class="panel pad">
+          <div class="panel-title" style="padding: 0; height: 28px; border: 0;">任务流程</div>
+          <div class="step"><div class="num">1</div><div><h4>区域锁定</h4><p>460 x 866，坐标检查残差在阈值内。</p><div class="button-row"><div class="btn blue">选择</div><div class="btn">检查</div></div></div></div>
+          <div class="step"><div class="num">2</div><div><h4>采集策略</h4><p>点击、滚轮、拖拽与轨迹采样全部开启。</p></div></div>
+          <div class="step"><div class="num">3</div><div><h4>开始录制</h4><p>长时间测试建议先确认磁盘空间与输出目录。</p></div></div>
+          <div class="metric" style="margin-top: 10px;"><div class="value">FFmpeg OK</div><div class="label">内置运行环境已通过 doctor</div></div>
+        </aside>
+        <main class="record-center">
+          <div class="timer-card">
+            <div class="muted" style="font-weight: 700;">RECORDING TIMER</div>
+            <div class="timer">00:00:00</div>
+            <div class="transport">
+              <div class="round play">▶</div>
+              <div class="round pause">Ⅱ</div>
+              <div class="round stop">■</div>
+            </div>
+            <div class="banner">待开始 · 输出至 recordings</div>
+          </div>
+          <div class="metrics">
+            <div class="metric"><div class="value">30</div><div class="label">视频 FPS</div></div>
+            <div class="metric"><div class="value">30</div><div class="label">采样 Hz</div></div>
+            <div class="metric"><div class="value">3s</div><div class="label">启动倒计时</div></div>
+          </div>
+          <div class="session-strip">
+            <div class="session-grid">
+              <div><h4>当前输出</h4><div class="path">recordings\20260612_first_long_test</div></div>
+              <div class="button-row"><div class="btn">打开</div><div class="btn">清单</div></div>
+            </div>
+          </div>
+        </main>
+        <aside class="panel">
+          <div class="panel-title">参数面板 <span class="muted">稳定优先</span></div>
+          <div class="settings-grid">
+            <div class="field"><label>目录</label><div class="fake-input">recordings</div><div class="btn">浏览</div><div class="btn">打开</div></div>
+            <div class="segmented"><span class="on">记录</span><span>高级</span><span>合规</span></div>
+            <div class="checks">
+              <div class="check"><span class="box">✓</span>鼠标轨迹</div>
+              <div class="check"><span class="box">✓</span>点击事件</div>
+              <div class="check"><span class="box">✓</span>滚轮事件</div>
+              <div class="check"><span class="box">✓</span>拖拽事件</div>
+              <div class="check"><span class="box">✓</span>状态提示</div>
+              <div class="check"><span class="box">✓</span>本地记录</div>
+            </div>
+            <div class="advanced">
+              <div class="spin"><span>点击距离</span><strong>8px</strong></div>
+              <div class="spin"><span>拖拽阈值</span><strong>10px</strong></div>
+              <div class="spin"><span>双击窗口</span><strong>500ms</strong></div>
+              <div class="spin"><span>检查容差</span><strong>80px</strong></div>
+            </div>
+          </div>
+        </aside>
+      </div>
+      <div class="concept-tag">方案 B · 专业控制台 · 录制页</div>
+    </section>
+
+    <section class="screen b" id="premium-analysis">
+      <div class="topbar">
+        <div class="brand">Screen Mouse Recorder</div>
+        <div class="tabs">
+          <div class="tab">录制控制台</div>
+          <div class="tab active">分析工作台</div>
+        </div>
+        <div class="status-pill">DONE</div>
+      </div>
+      <div class="analysis-layout">
+        <aside class="panel">
+          <div class="panel-title">导入源</div>
+          <div class="settings-grid">
+            <div class="path">mouse_summary.xlsx</div>
+            <div class="button-row"><div class="btn blue">导入 xlsx</div><div class="btn">导入文件夹</div></div>
+            <div class="metric-row" style="grid-template-columns: 1fr 1fr;">
+              <div class="metric"><div class="value">OK</div><div class="label">数据结构</div></div>
+              <div class="metric"><div class="value">2.1</div><div class="label">分钟</div></div>
+            </div>
+            <div class="metric-row" style="grid-template-columns: 1fr 1fr;">
+              <div class="metric"><div class="value">1382</div><div class="label">点击</div></div>
+              <div class="metric"><div class="value">56.7</div><div class="label">热区密度</div></div>
+            </div>
+            <div class="btn primary" style="width: 100%;">生成分析报告</div>
+            <div class="btn" style="width: 100%;">打开输出目录</div>
+          </div>
+        </aside>
+        <main class="panel">
+          <div class="panel-title">报告生成结果 <span class="muted">analysis_output</span></div>
+          <div class="preview-grid">
+            <div class="chart-area">
+              <div class="metric-row" style="margin-bottom: 12px;">
+                <div class="metric"><div class="value">1896</div><div class="label">事件</div></div>
+                <div class="metric"><div class="value">3650</div><div class="label">采样</div></div>
+                <div class="metric"><div class="value">80.4%</div><div class="label">底部点击</div></div>
+                <div class="metric"><div class="value">54.5%</div><div class="label">底部中区</div></div>
+                <div class="metric"><div class="value">OK</div><div class="label">输出</div></div>
+              </div>
+              <div class="output-list" style="padding: 0; grid-template-columns: 1fr;">
+                <div class="file-row"><div><h4>mouse_behavior_report.xlsx</h4><p>中文分析报告</p></div><span class="ok">OK</span></div>
+                <div class="file-row"><div><h4>click_heatmap_circle.png</h4><p>圆圈热力图</p></div><span class="ok">OK</span></div>
+                <div class="file-row"><div><h4>activity_timeline.png</h4><p>每分钟事件节奏</p></div><span class="ok">OK</span></div>
+                <div class="file-row"><div><h4>drag_durations.png</h4><p>拖拽时长分布</p></div><span class="ok">OK</span></div>
+              </div>
+              <div class="timeline" style="margin-top: 14px;">
+                <div class="bar" style="height: 18%;"></div><div class="bar" style="height: 30%;"></div><div class="bar" style="height: 68%;"></div>
+                <div class="bar" style="height: 88%;"></div><div class="bar" style="height: 72%;"></div><div class="bar" style="height: 43%;"></div>
+                <div class="bar" style="height: 26%;"></div><div class="bar" style="height: 36%;"></div>
+              </div>
+            </div>
+            <div class="heatmap-preview">
+              <img src="file:///D:/screen_capture/sessions/20260610_163422/analysis_output/click_heatmap_circle.png" alt="圆圈热力图" />
+            </div>
+          </div>
+        </main>
+      </div>
+      <div class="concept-tag">方案 B · 专业控制台 · 分析页</div>
+    </section>
+  </div>
+</body>
+</html>

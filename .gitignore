@@ -1,0 +1,43 @@
+# Local configuration and recordings
+config.json
+sessions/
+
+# Generated packages and binaries
+*.zip
+*.exe
+*.msi
+dist/
+build/
+
+# Generated analysis/export artifacts
+analysis_output/
+**/analysis_output/
+*.mp4
+*.jsonl
+*.log
+mouse_summary.json
+mouse_summary.xlsx
+mouse_analysis.xlsx
+mouse_behavior_report.xlsx
+click_heatmap*.png
+activity_timeline.png
+click_scatter.png
+drag_durations.png
+
+# Local UI verification screenshots
+design_mockups/ui_actual_*.png
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
