@@ -14,23 +14,24 @@ def build_record_page(app: Any, parent: tk.Widget) -> None:
 
     body = ttk.Frame(parent, style="App.TFrame")
     body.grid(row=0, column=0, sticky="nsew")
-    body.columnconfigure(0, weight=0, minsize=286)
+    body.columnconfigure(0, weight=0, minsize=276)
     body.columnconfigure(1, weight=1, minsize=500)
-    body.columnconfigure(2, weight=0, minsize=330)
+    body.columnconfigure(2, weight=0, minsize=320)
     body.rowconfigure(0, weight=1)
 
-    _build_workflow(app, body).grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-    _build_console(app, body).grid(row=0, column=1, sticky="nsew", padx=(0, 12))
+    _build_workflow(app, body).grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+    _build_console(app, body).grid(row=0, column=1, sticky="nsew", padx=(0, 10))
     _build_settings(app, body).grid(row=0, column=2, sticky="nsew")
 
 
 def _build_workflow(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
     workflow = ttk.LabelFrame(parent, text="录制流程", style="Panel.TLabelframe", padding=14)
+    workflow.configure(width=276)
     workflow.columnconfigure(0, weight=1)
     workflow.rowconfigure(6, weight=1)
 
     region = _step_frame(workflow, 0, "1", "选择录制区域")
-    _variable_text(region, 1, app.region_var, wraplength=224, fg=COLORS["text_secondary"])
+    _variable_text(region, 1, app.region_var, wraplength=202, fg=COLORS["text_secondary"])
     region_actions = ttk.Frame(region, style="Panel.TFrame")
     region_actions.grid(row=2, column=1, sticky="ew", pady=(8, 0))
     region_actions.columnconfigure(0, weight=1)
@@ -43,14 +44,14 @@ def _build_workflow(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
     _divider(workflow, 1)
 
     calibration = _step_frame(workflow, 2, "2", "坐标对应检查")
-    _variable_text(calibration, 1, app.calibration_var, wraplength=224)
+    _variable_text(calibration, 1, app.calibration_var, wraplength=202)
     app.calibrate_button = ttk.Button(calibration, text="对应检查", command=app.run_calibration)
     app.calibrate_button.grid(row=2, column=1, sticky="w", pady=(8, 0))
 
     _divider(workflow, 3)
 
     readiness = _step_frame(workflow, 4, "3", "开始长时间测试")
-    _variable_text(readiness, 1, app.readiness_var, wraplength=224)
+    _variable_text(readiness, 1, app.readiness_var, wraplength=202)
     tk.Label(
         readiness,
         text="输出可写、FFmpeg 就绪并确认记录后即可开始。",
@@ -58,7 +59,7 @@ def _build_workflow(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
         fg=COLORS["muted"],
         anchor="nw",
         justify="left",
-        wraplength=224,
+        wraplength=202,
         font=FONT_SMALL,
     ).grid(row=2, column=1, sticky="ew", pady=(6, 0))
 
@@ -72,6 +73,8 @@ def _build_console(app: Any, parent: tk.Widget) -> ttk.Frame:
 
     control = ttk.LabelFrame(center, text="录制控制", style="Panel.TLabelframe", padding=16)
     control.grid(row=0, column=0, sticky="ew")
+    control.configure(height=258)
+    control.grid_propagate(False)
     control.columnconfigure(0, weight=1)
 
     tk.Label(
@@ -104,6 +107,8 @@ def _build_console(app: Any, parent: tk.Widget) -> ttk.Frame:
     record_actions.grid(row=3, column=0, sticky="ew", pady=(0, 2))
     for column in range(3):
         record_actions.columnconfigure(column, weight=1)
+    record_actions.configure(height=54)
+    record_actions.grid_propagate(False)
     app.primary_button = app._transport_button(record_actions, "▶", app._play_action, COLORS["green"])
     app.primary_button.grid(row=0, column=0, sticky="ew", padx=(0, 8))
     app.pause_button = app._transport_button(record_actions, "Ⅱ", app.pause_recording, COLORS["yellow"])
@@ -173,6 +178,7 @@ def _build_console(app: Any, parent: tk.Widget) -> ttk.Frame:
 
 def _build_settings(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
     settings = ttk.LabelFrame(parent, text="记录设置", style="Panel.TLabelframe", padding=14)
+    settings.configure(width=320)
     settings.columnconfigure(0, weight=1)
     settings.rowconfigure(1, weight=1)
 
@@ -196,27 +202,29 @@ def _build_settings(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
     notebook = ttk.Notebook(settings, style="Settings.TNotebook", takefocus=False)
     notebook.bind("<ButtonRelease-1>", lambda _event: app.root.focus_set(), add="+")
     notebook.grid(row=1, column=0, sticky="nsew")
-    options = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
-    advanced = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
+    options = ttk.Frame(notebook, style="Panel.TFrame", padding=(10, 10, 10, 8))
+    advanced = ttk.Frame(notebook, style="Panel.TFrame", padding=(10, 10, 10, 8))
     notebook.add(options, text="记录选项")
     notebook.add(advanced, text="高级参数")
     options.columnconfigure(0, weight=1)
-    options.columnconfigure(1, weight=1)
 
     row = 0
     app._option(options, row, "区域外活动", app.record_outside_var, "开启后，录制区域外的鼠标坐标也会写入日志；关闭后只保留区域内数据。")
-    app._option(options, row, "轨迹采样", app.samples_var, "按采样频率持续记录鼠标位置，生成 mouse_samples.jsonl。", column=1)
+    row += 1
+    app._option(options, row, "轨迹采样", app.samples_var, "按采样频率持续记录鼠标位置，生成 mouse_samples.jsonl。")
     row += 1
     app._option(options, row, "点击识别", app.clicks_var, "记录 down/up，并根据时间和距离合成 click / double_click_candidate。")
-    app._option(options, row, "滚轮记录", app.wheel_var, "记录鼠标滚轮方向和滚动量，用于分析浏览、缩放等行为。", column=1)
+    row += 1
+    app._option(options, row, "滚轮记录", app.wheel_var, "记录鼠标滚轮方向和滚动量，用于分析浏览、缩放等行为。")
     row += 1
     app._option(options, row, "拖拽识别", app.drag_var, "按按下、移动距离、抬起识别 drag_start / drag_move / drag_end。")
-    app._option(options, row, "同步标记", app.sync_var, "调试用。开启后录制开始时在视频里闪现同步标记，并在日志里写入 sync_marker。", column=1)
+    row += 1
+    app._option(options, row, "同步标记", app.sync_var, "调试用。开启后录制开始时在视频里闪现同步标记，并在日志里写入 sync_marker。")
     row += 1
     app._option(options, row, "状态提示栏", app.recording_status_banner_var, "开启后在控制区显示录制、暂停、保存等状态提示；关闭后隐藏该提示栏，不影响录制数据。")
 
     for column in range(4):
-        advanced.columnconfigure(column, weight=1)
+        advanced.columnconfigure(column, weight=1 if column in (1, 3) else 0)
     app._number_field(advanced, 0, 0, "视频 FPS", app.video_fps_var, 1, 120)
     app._number_field(advanced, 0, 2, "采样 Hz", app.sample_fps_var, 1, 120)
     app._number_field(advanced, 1, 0, "点击间隔 ms", app.click_duration_var, 50, 2000)

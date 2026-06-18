@@ -19,6 +19,22 @@ from screen_mouse_recorder.app import ScreenMouseRecorderApp
 from screen_mouse_recorder.analysis import generate_behavior_report
 from screen_mouse_recorder.calibration import build_calibration_result
 from screen_mouse_recorder.config import AppConfig
+from screen_mouse_recorder.frame_sampler import (
+    ClickMarker,
+    CropRegion,
+    DenseRange,
+    FrameSamplerConfig,
+    VideoInfo,
+    _nearest_click_marker,
+    _prepare_frame_image,
+    build_frame_plan,
+    default_output_dir,
+    estimate_sampling,
+    format_timecode,
+    load_click_markers,
+    parse_timecode,
+)
+from PIL import Image
 from screen_mouse_recorder.models import Region, TimingContext
 from screen_mouse_recorder.mouse_logger import MouseActivityLogger
 from screen_mouse_recorder.postprocess import generate_summary
@@ -64,6 +80,152 @@ class CoreSmokeTests(unittest.TestCase):
 
         self.assertFalse(config.show_recording_status_banner)
         self.assertFalse(config.to_dict()["show_recording_status_banner"])
+
+    def test_config_includes_frame_sampler_defaults(self) -> None:
+        config = AppConfig()
+
+        self.assertEqual(config.frame_sampler_interval_seconds, 10.0)
+        self.assertEqual(config.frame_sampler_cols, 5)
+        self.assertEqual(config.frame_sampler_rows, 6)
+        self.assertTrue(config.frame_sampler_show_timestamp)
+
+    def test_frame_sampler_timecode_helpers(self) -> None:
+        self.assertEqual(parse_timecode("01:02:03"), 3723)
+        self.assertEqual(parse_timecode("02:30"), 150)
+        self.assertEqual(format_timecode(62.5), "00:01:02.500")
+
+    def test_frame_sampler_default_output_dir_uses_parent_folder_and_range(self) -> None:
+        path = default_output_dir(
+            Path(r"D:\sessions\青云决\recording.mp4"),
+            Path(r"D:\sessions\青云决"),
+            start_seconds=90,
+            end_seconds=1800,
+        )
+
+        self.assertEqual(path.name, "青云决_抽帧1（000130-003000）")
+
+    def test_frame_sampler_default_output_dir_uses_next_available_index(self) -> None:
+        with TemporaryDirectory() as directory:
+            folder = Path(directory) / "青云决"
+            folder.mkdir()
+            (folder / "青云决_抽帧1（000130-003000）").mkdir()
+
+            path = default_output_dir(
+                folder / "recording.mp4",
+                folder,
+                start_seconds=90,
+                end_seconds=1800,
+            )
+
+        self.assertEqual(path.name, "青云决_抽帧2（000130-003000）")
+
+    def test_frame_sampler_plan_uses_dense_range_and_dedupes(self) -> None:
+        video = VideoInfo(Path("demo.mp4"), duration_seconds=40, width=100, height=100, fps=30, file_size_bytes=1000)
+        config = FrameSamplerConfig(
+            video_path=Path("demo.mp4"),
+            output_dir=Path("out"),
+            start_seconds=0,
+            end_seconds=30,
+            interval_seconds=10,
+            sheet_cols=3,
+            sheet_rows=2,
+            dense_start_seconds=5,
+            dense_end_seconds=15,
+            dense_interval_seconds=5,
+        )
+
+        plan = build_frame_plan(config, video)
+        self.assertEqual([entry.seconds for entry in plan], [0, 5, 10, 15, 20, 30])
+        self.assertEqual([entry.is_dense for entry in plan], [False, True, True, True, False, False])
+        self.assertEqual(plan[-1].sheet_row, 2)
+        self.assertEqual(plan[-1].sheet_col, 3)
+
+    def test_frame_sampler_plan_uses_multiple_dense_ranges(self) -> None:
+        video = VideoInfo(Path("demo.mp4"), duration_seconds=60, width=100, height=100, fps=30, file_size_bytes=1000)
+        config = FrameSamplerConfig(
+            video_path=Path("demo.mp4"),
+            output_dir=Path("out"),
+            start_seconds=0,
+            end_seconds=30,
+            interval_seconds=10,
+            sheet_cols=4,
+            sheet_rows=2,
+            dense_ranges=[
+                DenseRange(start_seconds=4, end_seconds=8, interval_seconds=2),
+                DenseRange(start_seconds=20, end_seconds=26, interval_seconds=3),
+            ],
+        )
+
+        plan = build_frame_plan(config, video)
+        self.assertEqual([entry.seconds for entry in plan], [0, 4, 6, 8, 10, 20, 23, 26, 30])
+        self.assertEqual([entry.is_dense for entry in plan], [False, True, True, True, False, True, True, True, False])
+
+    def test_frame_sampler_estimate_counts_sheets(self) -> None:
+        video = VideoInfo(Path("demo.mp4"), duration_seconds=1800, width=1200, height=2600, fps=30, file_size_bytes=1000)
+        config = FrameSamplerConfig(
+            video_path=Path("demo.mp4"),
+            output_dir=Path("out"),
+            start_seconds=0,
+            end_seconds=1800,
+            interval_seconds=10,
+            sheet_cols=5,
+            sheet_rows=6,
+        )
+
+        estimate = estimate_sampling(config, video)
+        self.assertEqual(estimate.frame_count, 181)
+        self.assertEqual(estimate.sheet_count, 7)
+
+    def test_frame_sampler_loads_click_markers(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "mouse_events.jsonl"
+            path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event_type": "move_sample", "t_video_ms": 100, "video_x": 1, "video_y": 2}),
+                        json.dumps({"event_type": "click", "t_video_ms": 1200, "video_x": 30, "video_y": 40}),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            markers = load_click_markers(path)
+
+        self.assertEqual(len(markers), 1)
+        self.assertEqual(markers[0].seconds, 1.2)
+        self.assertEqual((markers[0].x, markers[0].y), (30, 40))
+
+    def test_frame_sampler_click_marker_uses_half_second_window(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "mouse_events.jsonl"
+            path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event_type": "click", "t_video_ms": 1000, "video_x": 30, "video_y": 40}),
+                        json.dumps({"event_type": "click", "t_video_ms": 1700, "video_x": 50, "video_y": 60}),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            markers = load_click_markers(path)
+
+        self.assertIsNotNone(_nearest_click_marker(markers, 1.45, 0.5))
+        self.assertIsNone(_nearest_click_marker(markers, 2.3, 0.5))
+
+    def test_frame_sampler_maps_click_marker_after_crop(self) -> None:
+        image = Image.new("RGB", (100, 100), "white")
+        marker = load_click_markers(None)
+        self.assertEqual(marker, [])
+
+        thumb, position = _prepare_frame_image(
+            image,
+            CropRegion(x=20, y=10, width=40, height=40),
+            200,
+            ClickMarker(seconds=1.0, x=30, y=20),
+        )
+
+        self.assertEqual(thumb.size, (200, 200))
+        self.assertEqual(position, (50, 50))
 
     def test_video_recorder_draws_mouse_cursor(self) -> None:
         region = Region(screen_x=10, screen_y=20, width=320, height=240)

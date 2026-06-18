@@ -1,24 +1,47 @@
 @echo off
 setlocal
 set "ROOT=%~dp0"
-set "BUNDLED_PYTHON=C:\Users\SEASUN\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+set "RUNTIME_PYTHON=%ROOT%.runtime\python\python.exe"
+set "PYTHONDONTWRITEBYTECODE=1"
 
-if exist "%BUNDLED_PYTHON%" (
-  "%BUNDLED_PYTHON%" "%ROOT%run.py" %*
+if exist "%RUNTIME_PYTHON%" (
+  "%RUNTIME_PYTHON%" "%ROOT%run.py" %*
+  if errorlevel 1 pause
   exit /b %ERRORLEVEL%
 )
 
 where py >nul 2>nul
 if %ERRORLEVEL%==0 (
-  py -3 "%ROOT%run.py" %*
-  exit /b %ERRORLEVEL%
+  py -3 --version >nul 2>nul
+  if %ERRORLEVEL%==0 (
+    py -3 "%ROOT%run.py" %*
+    if errorlevel 1 pause
+    exit /b %ERRORLEVEL%
+  )
 )
 
 where python >nul 2>nul
 if %ERRORLEVEL%==0 (
-  python "%ROOT%run.py" %*
-  exit /b %ERRORLEVEL%
+  python --version >nul 2>nul
+  if %ERRORLEVEL%==0 (
+    python "%ROOT%run.py" %*
+    if errorlevel 1 pause
+    exit /b %ERRORLEVEL%
+  )
 )
 
-echo Python 3 was not found. Install Python 3.10+ or run with the bundled Codex Python path.
+where python3 >nul 2>nul
+if %ERRORLEVEL%==0 (
+  python3 --version >nul 2>nul
+  if %ERRORLEVEL%==0 (
+    python3 "%ROOT%run.py" %*
+    if errorlevel 1 pause
+    exit /b %ERRORLEVEL%
+  )
+)
+
+echo Python 3 was not found.
+echo Put Python at ".runtime\python\python.exe" or install Python 3.10+ and run:
+echo python -m pip install -r requirements.txt
+pause
 exit /b 1

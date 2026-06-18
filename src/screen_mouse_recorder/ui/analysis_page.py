@@ -12,13 +12,19 @@ def build_analysis_page(app: Any, parent: tk.Widget) -> None:
     import_panel = ttk.LabelFrame(parent, text="导入", style="Panel.TLabelframe", padding=14)
     import_panel.grid(row=0, column=0, sticky="ew", pady=(0, 12))
     import_panel.columnconfigure(1, weight=1)
+    import_panel.columnconfigure(2, minsize=112)
+    import_panel.columnconfigure(3, minsize=112)
 
     ttk.Label(import_panel, text="输入", style="Panel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
     ttk.Entry(import_panel, textvariable=app.analysis_input_var, state="readonly").grid(
         row=0, column=1, sticky="ew", padx=(0, 8)
     )
-    ttk.Button(import_panel, text="选择 xlsx", command=app.choose_analysis_xlsx).grid(row=0, column=2, padx=(0, 8))
-    ttk.Button(import_panel, text="选择文件夹", command=app.choose_analysis_folder).grid(row=0, column=3)
+    ttk.Button(import_panel, text="选择 xlsx", command=app.choose_analysis_xlsx, width=12).grid(
+        row=0, column=2, sticky="ew", padx=(0, 8)
+    )
+    ttk.Button(import_panel, text="选择文件夹", command=app.choose_analysis_folder, width=12).grid(
+        row=0, column=3, sticky="ew"
+    )
 
     ttk.Label(import_panel, text="输出", style="Panel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
     ttk.Entry(import_panel, textvariable=app.analysis_output_var, state="readonly").grid(
@@ -40,8 +46,8 @@ def build_analysis_page(app: Any, parent: tk.Widget) -> None:
     tk.Label(
         summary_panel,
         textvariable=app.analysis_summary_var,
-        bg="#f8fafb",
-        fg="#60717d",
+        bg="#ffffff",
+        fg="#6b6b6b",
         height=1,
         anchor="w",
         justify="left",
@@ -57,15 +63,15 @@ def build_analysis_page(app: Any, parent: tk.Widget) -> None:
     actions = ttk.Frame(output_panel, style="Panel.TFrame")
     actions.grid(row=0, column=0, sticky="ew", pady=(0, 12))
     actions.columnconfigure(2, weight=1)
-    app.analysis_generate_button = ttk.Button(actions, text="生成分析报告", command=app.run_import_analysis)
-    app.analysis_generate_button.grid(row=0, column=0, padx=(0, 8))
-    app.analysis_open_button = ttk.Button(actions, text="打开输出", command=app.open_analysis_output, state="disabled")
-    app.analysis_open_button.grid(row=0, column=1, padx=(0, 8))
+    app.analysis_generate_button = ttk.Button(actions, text="生成分析报告", command=app.run_import_analysis, style="Primary.TButton", width=14)
+    app.analysis_generate_button.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+    app.analysis_open_button = ttk.Button(actions, text="打开输出", command=app.open_analysis_output, state="disabled", width=12)
+    app.analysis_open_button.grid(row=0, column=1, sticky="ew", padx=(0, 8))
     tk.Label(
         actions,
         textvariable=app.analysis_status_var,
-        bg="#f8fafb",
-        fg="#60717d",
+        bg="#ffffff",
+        fg="#6b6b6b",
         anchor="e",
         font=("Segoe UI", 9),
     ).grid(row=0, column=2, sticky="e")

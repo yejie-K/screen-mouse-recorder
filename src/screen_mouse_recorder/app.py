@@ -10,9 +10,24 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
+from PIL import Image, ImageTk
+
 from . import __version__
 from .analysis import default_analysis_output_dir, describe_analysis_source, generate_behavior_report
 from .config import AppConfig
+from .frame_sampler import (
+    CropRegion,
+    DenseRange,
+    FrameSamplerConfig,
+    VideoInfo,
+    default_output_dir,
+    estimate_sampling,
+    extract_preview_frame,
+    format_timecode,
+    parse_timecode,
+    probe_video,
+    sample_video_to_sheets,
+)
 from .models import Region, TimingContext, monotonic_ms, wall_time_iso
 from .mouse_logger import MouseActivityLogger
 from .postprocess import generate_summary
@@ -26,8 +41,9 @@ from .ui.components import (
     option_checkbutton,
     transport_button as create_transport_button,
 )
+from .ui.frame_sampler_page import build_frame_sampler_page, create_timecode_inputs
 from .ui.record_page import build_record_page
-from .ui.theme import apply_app_theme
+from .ui.theme import COLORS, apply_app_theme
 from .video_recorder import FFmpegRecorder, concat_mp4_segments
 
 
@@ -92,6 +108,51 @@ class ScreenMouseRecorderApp:
         self.analysis_output_dir: Path | None = None
         self.analysis_output_status_vars: dict[str, tk.StringVar] = {}
         self.analysis_output_badges: dict[str, tk.Label] = {}
+        self.frame_video_var = tk.StringVar(value="未选择")
+        self.frame_output_var = tk.StringVar(value=str((base_dir / self.config.frame_sampler_output_root).resolve()))
+        self.frame_duration_var = tk.StringVar(value="--")
+        self.frame_resolution_var = tk.StringVar(value="--")
+        self.frame_count_var = tk.StringVar(value="--")
+        self.frame_sheet_count_var = tk.StringVar(value="--")
+        self.frame_eta_var = tk.StringVar(value="--")
+        self.frame_status_var = tk.StringVar(value="选择视频后可预估抽帧数量和合成图数量。")
+        self.frame_progress_var = tk.StringVar(value="")
+        self.frame_start_var = tk.StringVar(value=self.config.frame_sampler_start)
+        self.frame_end_var = tk.StringVar(value=self.config.frame_sampler_end)
+        self.frame_interval_var = tk.StringVar(value=str(self.config.frame_sampler_interval_seconds).rstrip("0").rstrip("."))
+        self.frame_cols_var = tk.StringVar(value=str(self.config.frame_sampler_cols))
+        self.frame_rows_var = tk.StringVar(value=str(self.config.frame_sampler_rows))
+        self.frame_thumb_width_var = tk.StringVar(value=str(self.config.frame_sampler_thumb_width))
+        self.frame_quality_var = tk.StringVar(value=str(self.config.frame_sampler_jpeg_quality))
+        self.frame_quality_preset_var = tk.StringVar(value=self._frame_quality_preset_from_config())
+        self.frame_dense_start_var = tk.StringVar(value=self.config.frame_sampler_dense_start)
+        self.frame_dense_end_var = tk.StringVar(value=self.config.frame_sampler_dense_end)
+        self.frame_dense_interval_var = tk.StringVar(
+            value=str(self.config.frame_sampler_dense_interval_seconds).rstrip("0").rstrip(".")
+        )
+        self.frame_crop_x_var = tk.StringVar(value=str(self.config.frame_sampler_crop_x))
+        self.frame_crop_y_var = tk.StringVar(value=str(self.config.frame_sampler_crop_y))
+        self.frame_crop_w_var = tk.StringVar(value=str(self.config.frame_sampler_crop_width or ""))
+        self.frame_crop_h_var = tk.StringVar(value=str(self.config.frame_sampler_crop_height or ""))
+        self.frame_source_path: Path | None = None
+        self.frame_output_dir: Path | None = None
+        self.frame_default_output_dir: Path | None = None
+        self.frame_output_is_default = True
+        self.frame_video_info: VideoInfo | None = None
+        self.frame_is_running = False
+        self.frame_crop_canvas: tk.Canvas | None = None
+        self.frame_crop_preview_original: Image.Image | None = None
+        self.frame_crop_preview_photo: ImageTk.PhotoImage | None = None
+        self.frame_crop_preview_scale = 1.0
+        self.frame_crop_preview_offset = (0, 0)
+        self.frame_crop_drag_start: tuple[int, int] | None = None
+        self.frame_crop_rect_id: int | None = None
+        self.frame_dense_rows_container: ttk.Frame | None = None
+        self.frame_dense_ranges: list[dict[str, tk.StringVar]] = []
+        self.frame_click_events_path: Path | None = self._resolve_config_path(self.config.frame_sampler_click_events_path)
+        self.frame_click_events_var = tk.StringVar(value=str(self.frame_click_events_path or ""))
+        self.main_notebook: ttk.Notebook | None = None
+        self._tab_animation_after_ids: list[str] = []
 
         self.record_outside_var = tk.BooleanVar(value=self.config.record_outside_region)
         self.samples_var = tk.BooleanVar(value=self.config.record_mouse_samples)
@@ -101,6 +162,12 @@ class ScreenMouseRecorderApp:
         self.sync_var = tk.BooleanVar(value=self.config.show_sync_marker)
         self.recording_status_banner_var = tk.BooleanVar(value=self.config.show_recording_status_banner)
         self.privacy_var = tk.BooleanVar(value=False)
+        self.frame_show_timestamp_var = tk.BooleanVar(value=self.config.frame_sampler_show_timestamp)
+        self.frame_show_index_var = tk.BooleanVar(value=self.config.frame_sampler_show_index)
+        self.frame_dense_enabled_var = tk.BooleanVar(value=self.config.frame_sampler_dense_enabled)
+        self.frame_crop_enabled_var = tk.BooleanVar(value=self.config.frame_sampler_crop_enabled)
+        self.frame_draw_click_markers_var = tk.BooleanVar(value=self.config.frame_sampler_draw_click_markers)
+        self.frame_dense_ranges = self._initial_frame_dense_ranges()
         self.video_fps_var = tk.IntVar(value=self.config.video_fps)
         self.sample_fps_var = tk.IntVar(value=self.config.sample_fps)
         self.click_duration_var = tk.IntVar(value=self.config.click_max_duration_ms)
@@ -139,8 +206,8 @@ class ScreenMouseRecorderApp:
         tk.Label(
             header,
             textvariable=self.env_var,
-            bg="#edf1f4",
-            fg="#60717d",
+            bg=COLORS["app_bg"],
+            fg=COLORS["muted"],
             anchor="e",
             font=("Segoe UI", 9),
             width=24,
@@ -148,8 +215,8 @@ class ScreenMouseRecorderApp:
         self.status_badge = tk.Label(
             header,
             textvariable=self.status_var,
-            bg="#dfe7ec",
-            fg="#263238",
+            bg=COLORS["panel_alt"],
+            fg=COLORS["text_secondary"],
             padx=12,
             pady=4,
             width=10,
@@ -159,24 +226,120 @@ class ScreenMouseRecorderApp:
         self.status_badge.grid(row=0, column=2, sticky="e")
 
         main_notebook = ttk.Notebook(shell, style="Settings.TNotebook", takefocus=False)
+        self.main_notebook = main_notebook
         main_notebook.bind("<ButtonRelease-1>", lambda _event: self.root.focus_set(), add="+")
+        main_notebook.bind("<<NotebookTabChanged>>", self._animate_tab_change, add="+")
         main_notebook.grid(row=1, column=0, sticky="nsew")
 
-        record_page = ttk.Frame(main_notebook, style="App.TFrame", padding=(0, 12, 0, 0))
-        analysis_page = ttk.Frame(main_notebook, style="App.TFrame", padding=(0, 12, 0, 0))
+        record_page = ttk.Frame(main_notebook, style="TabPage.TFrame", padding=(0, 12, 0, 0))
+        analysis_page = ttk.Frame(main_notebook, style="TabPage.TFrame", padding=(0, 12, 0, 0))
+        frame_sampler_page = ttk.Frame(main_notebook, style="TabPage.TFrame", padding=(0, 12, 0, 0))
         main_notebook.add(record_page, text="录制")
         main_notebook.add(analysis_page, text="分析处理")
+        main_notebook.add(frame_sampler_page, text="抽帧拼图")
 
         build_record_page(self, record_page)
         self._build_analysis_page(analysis_page)
+        self._build_frame_sampler_page(frame_sampler_page)
+
+    def _animate_tab_change(self, _event: tk.Event | None = None) -> None:
+        notebook = self.main_notebook
+        if notebook is None:
+            return
+        for after_id in self._tab_animation_after_ids:
+            try:
+                self.root.after_cancel(after_id)
+            except tk.TclError:
+                pass
+        self._tab_animation_after_ids.clear()
+        for tab_id in notebook.tabs():
+            page = notebook.nametowidget(tab_id)
+            if isinstance(page, ttk.Frame):
+                page.configure(style="TabPage.TFrame")
+        try:
+            selected_page = notebook.nametowidget(notebook.select())
+        except tk.TclError:
+            return
+        if not isinstance(selected_page, ttk.Frame):
+            return
+
+        def set_style(style_name: str) -> None:
+            try:
+                selected_page.configure(style=style_name)
+            except tk.TclError:
+                pass
+
+        set_style("TabPagePulse.TFrame")
+        self._tab_animation_after_ids.append(self.root.after(90, lambda: set_style("TabPage.TFrame")))
 
     def _build_analysis_page(self, parent: tk.Widget) -> None:
         build_analysis_page(self, parent)
+
+    def _build_frame_sampler_page(self, parent: tk.Widget) -> None:
+        build_frame_sampler_page(self, parent)
+
+    def _frame_quality_preset_from_config(self) -> str:
+        preset = str(getattr(self.config, "frame_sampler_quality_preset", "")).strip()
+        if preset in {"低", "中", "高", "无损"}:
+            return preset
+        quality = int(getattr(self.config, "frame_sampler_jpeg_quality", 85) or 85)
+        if quality <= 70:
+            return "低"
+        if quality <= 84:
+            return "中"
+        return "高"
+
+    def _resolve_config_path(self, value: str) -> Path | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        path = Path(text)
+        if not path.is_absolute():
+            path = self.base_dir / path
+        return path.resolve()
+
+    def _initial_frame_dense_ranges(self) -> list[dict[str, tk.StringVar]]:
+        rows: list[dict[str, tk.StringVar]] = []
+        for item in self.config.frame_sampler_dense_ranges:
+            if not isinstance(item, dict):
+                continue
+            start = str(item.get("start", "")).strip()
+            end = str(item.get("end", "")).strip()
+            interval = str(item.get("interval", "")).strip() or "2"
+            if start or end:
+                rows.append(self._make_frame_dense_row(start, end, interval))
+        if not rows and self.config.frame_sampler_dense_enabled:
+            start = self.config.frame_sampler_dense_start.strip()
+            end = self.config.frame_sampler_dense_end.strip()
+            interval = str(self.config.frame_sampler_dense_interval_seconds).rstrip("0").rstrip(".") or "2"
+            if start or end:
+                rows.append(self._make_frame_dense_row(start, end, interval))
+        return rows
+
+    def _make_frame_dense_row(self, start: str = "", end: str = "", interval: str = "2") -> dict[str, tk.StringVar]:
+        row = {
+            "start": tk.StringVar(value=start),
+            "end": tk.StringVar(value=end),
+            "interval": tk.StringVar(value=interval),
+        }
+        for variable in row.values():
+            variable.trace_add("write", lambda *_args: self._on_config_changed())
+        return row
 
     def _metric(self, parent: tk.Widget, column: int, label: str, variable: tk.StringVar) -> None:
         metric_card(parent, column, label, variable, padx=(6, 0))
 
     def _analysis_metric(self, parent: tk.Widget, column: int, label: str, variable: tk.StringVar) -> None:
+        metric_card(
+            parent,
+            column,
+            label,
+            variable,
+            value_font=("Segoe UI", 13, "bold"),
+            padx=(8, 0),
+        )
+
+    def _frame_metric(self, parent: tk.Widget, column: int, label: str, variable: tk.StringVar) -> None:
         metric_card(
             parent,
             column,
@@ -241,9 +404,31 @@ class ScreenMouseRecorderApp:
             self.calibration_tolerance_var,
             self.startup_countdown_var,
             self.session_name_var,
+            self.frame_start_var,
+            self.frame_end_var,
+            self.frame_interval_var,
+            self.frame_cols_var,
+            self.frame_rows_var,
+            self.frame_thumb_width_var,
+            self.frame_quality_var,
+            self.frame_quality_preset_var,
+            self.frame_show_timestamp_var,
+            self.frame_show_index_var,
+            self.frame_draw_click_markers_var,
+            self.frame_dense_enabled_var,
+            self.frame_dense_start_var,
+            self.frame_dense_end_var,
+            self.frame_dense_interval_var,
+            self.frame_crop_enabled_var,
+            self.frame_crop_x_var,
+            self.frame_crop_y_var,
+            self.frame_crop_w_var,
+            self.frame_crop_h_var,
         ]
         for variable in vars_to_track:
             variable.trace_add("write", lambda *_args: self._on_config_changed())
+        self.frame_start_var.trace_add("write", lambda *_args: self._on_frame_time_range_changed())
+        self.frame_end_var.trace_add("write", lambda *_args: self._on_frame_time_range_changed())
 
     def _play_action(self) -> None:
         if self.is_paused:
@@ -1072,6 +1257,642 @@ class ScreenMouseRecorderApp:
             return
         os.startfile(self.analysis_output_dir)
 
+    def choose_frame_video(self) -> None:
+        initial_dir = self.storage.session_dir if self.storage is not None else self.config.output_root_path(self.base_dir)
+        path = filedialog.askopenfilename(
+            title="选择视频",
+            initialdir=initial_dir,
+            filetypes=[
+                ("视频文件", "*.mp4 *.mov *.mkv *.avi"),
+                ("MP4", "*.mp4"),
+                ("所有文件", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        self._set_frame_video(Path(path))
+
+    def choose_frame_output(self) -> None:
+        initial_dir = self.frame_output_dir or Path(self.frame_output_var.get() or self.base_dir)
+        directory = filedialog.askdirectory(title="选择输出目录", initialdir=initial_dir)
+        if not directory:
+            return
+        self.frame_output_dir = Path(directory).resolve()
+        self.frame_output_is_default = False
+        self.frame_output_var.set(str(self.frame_output_dir))
+        self._sync_frame_config_from_ui()
+        self._save_config()
+
+    def _set_frame_video(self, path: Path) -> None:
+        path = path.resolve()
+        self.frame_source_path = path
+        self.frame_video_info = None
+        self.frame_output_is_default = True
+        self.frame_video_var.set(str(path))
+        self.frame_status_var.set("读取视频信息中...")
+        self.frame_progress_var.set("")
+        self._refresh_frame_default_output_dir(force=True)
+        self.frame_click_events_path = self._guess_frame_click_events_path(path)
+        self.frame_click_events_var.set(str(self.frame_click_events_path or ""))
+        if hasattr(self, "frame_open_button"):
+            self.frame_open_button.configure(state="disabled")
+        self._clear_frame_crop_preview()
+
+        def worker() -> None:
+            info = None
+            error: Exception | None = None
+            try:
+                info = probe_video(path, self.config.ffmpeg_path)
+            except Exception as exc:
+                error = exc
+            self.root.after(0, lambda: self._on_frame_probe_done(info, error))
+
+        threading.Thread(target=worker, name="frame-probe", daemon=True).start()
+
+    def _on_frame_probe_done(self, info: VideoInfo | None, error: Exception | None) -> None:
+        if error is not None:
+            self.frame_video_info = None
+            self.frame_duration_var.set("--")
+            self.frame_resolution_var.set("--")
+            self.frame_status_var.set(f"读取失败：{error}")
+            messagebox.showerror("读取视频失败", str(error))
+            return
+        if info is None:
+            return
+        self.frame_video_info = info
+        self.frame_duration_var.set(format_timecode(info.duration_seconds))
+        self.frame_resolution_var.set(f"{info.width}x{info.height}")
+        self._refresh_frame_default_output_dir()
+        self.frame_status_var.set("视频已读取，可调整参数后预估或生成。")
+        self.load_frame_crop_preview(show_message=False)
+        self.estimate_frame_sampling(show_message=False)
+
+    def _on_frame_time_range_changed(self) -> None:
+        self._refresh_frame_default_output_dir()
+
+    def _refresh_frame_default_output_dir(self, *, force: bool = False) -> None:
+        video_path = self.frame_source_path
+        if video_path is None:
+            return
+        current_text = self.frame_output_var.get().strip()
+        if not force and current_text and not self.frame_output_is_default:
+            return
+        if not force and current_text and self.frame_default_output_dir is not None:
+            try:
+                current_path = Path(current_text).resolve()
+            except OSError:
+                self.frame_output_is_default = False
+                return
+            if current_path != self.frame_default_output_dir.resolve():
+                self.frame_output_is_default = False
+                return
+        start, end = self._frame_output_range_seconds()
+        output_dir = default_output_dir(video_path, video_path.parent, start_seconds=start, end_seconds=end)
+        self.frame_default_output_dir = output_dir
+        self.frame_output_dir = output_dir
+        self.frame_output_is_default = True
+        self.frame_output_var.set(str(output_dir))
+
+    def _frame_output_range_seconds(self) -> tuple[float, float | None]:
+        try:
+            start = parse_timecode(self.frame_start_var.get()) or 0.0
+        except ValueError:
+            start = 0.0
+        try:
+            end = parse_timecode(self.frame_end_var.get())
+        except ValueError:
+            end = None
+        if end is None and self.frame_video_info is not None:
+            end = self.frame_video_info.duration_seconds
+        return start, end
+
+    def _guess_frame_click_events_path(self, video_path: Path) -> Path | None:
+        candidates = [
+            video_path.with_name("mouse_events.jsonl"),
+            video_path.parent / "mouse_events.jsonl",
+            video_path.parent.parent / "mouse_events.jsonl",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate.resolve()
+        if self.storage is not None and self.storage.mouse_events.exists():
+            return self.storage.mouse_events.resolve()
+        return self.frame_click_events_path if self.frame_click_events_path and self.frame_click_events_path.exists() else None
+
+    def add_frame_dense_range(self, start: str = "", end: str = "", interval: str = "2") -> None:
+        self.frame_dense_ranges.append(self._make_frame_dense_row(start, end, interval))
+        self.frame_dense_enabled_var.set(bool(self.frame_dense_ranges))
+        self.render_frame_dense_rows()
+        self._on_config_changed()
+
+    def remove_frame_dense_range(self, index: int) -> None:
+        if 0 <= index < len(self.frame_dense_ranges):
+            del self.frame_dense_ranges[index]
+        self.frame_dense_enabled_var.set(bool(self.frame_dense_ranges))
+        self.render_frame_dense_rows()
+        self._on_config_changed()
+
+    def render_frame_dense_rows(self) -> None:
+        container = self.frame_dense_rows_container
+        if container is None:
+            return
+        for child in container.winfo_children():
+            child.destroy()
+        if not self.frame_dense_ranges:
+            tk.Label(
+                container,
+                text="未添加关键段",
+                bg=COLORS["panel_bg"],
+                fg=COLORS["muted"],
+                anchor="w",
+                font=("Segoe UI", 9),
+            ).grid(row=0, column=0, sticky="ew", pady=(2, 0))
+            return
+
+        for row_index, row_data in enumerate(self.frame_dense_ranges, start=1):
+            card = tk.Frame(
+                container,
+                bg=COLORS["panel_row"],
+                highlightbackground=COLORS["border_soft"],
+                highlightthickness=1,
+            )
+            card.grid(row=row_index - 1, column=0, sticky="ew", pady=(0, 8))
+            card.columnconfigure(1, weight=1)
+            card.columnconfigure(3, weight=0)
+
+            tk.Label(
+                card,
+                text=f"关键段 {row_index}",
+                bg=COLORS["panel_row"],
+                fg=COLORS["text_secondary"],
+                anchor="w",
+                font=("Segoe UI", 9, "bold"),
+            ).grid(row=0, column=0, columnspan=3, sticky="ew", padx=(10, 8), pady=(8, 2))
+            ttk.Button(
+                card,
+                text="删",
+                command=lambda index=row_index - 1: self.remove_frame_dense_range(index),
+                width=4,
+            ).grid(row=0, column=3, sticky="ne", padx=(0, 8), pady=(6, 0))
+
+            tk.Label(
+                card,
+                text="开始",
+                bg=COLORS["panel_row"],
+                fg=COLORS["muted"],
+                anchor="w",
+                font=("Segoe UI", 9),
+                width=5,
+            ).grid(row=1, column=0, sticky="w", padx=(10, 6), pady=3)
+            create_timecode_inputs(card, row_data["start"], empty_as_blank=True).grid(
+                row=1, column=1, sticky="w", padx=(0, 8), pady=3
+            )
+
+            tk.Label(
+                card,
+                text="间隔",
+                bg=COLORS["panel_row"],
+                fg=COLORS["muted"],
+                anchor="w",
+                font=("Segoe UI", 9),
+                width=5,
+            ).grid(row=1, column=2, sticky="w", padx=(0, 6), pady=3)
+            ttk.Entry(card, textvariable=row_data["interval"], width=7, justify="center").grid(
+                row=1, column=3, sticky="e", padx=(0, 8), pady=3
+            )
+
+            tk.Label(
+                card,
+                text="结束",
+                bg=COLORS["panel_row"],
+                fg=COLORS["muted"],
+                anchor="w",
+                font=("Segoe UI", 9),
+                width=5,
+            ).grid(row=2, column=0, sticky="w", padx=(10, 6), pady=(3, 8))
+            create_timecode_inputs(card, row_data["end"], empty_as_blank=True).grid(
+                row=2, column=1, sticky="w", padx=(0, 8), pady=(3, 8)
+            )
+
+    def bind_frame_crop_canvas(self) -> None:
+        canvas = self.frame_crop_canvas
+        if canvas is None:
+            return
+        canvas.bind("<ButtonPress-1>", self._on_frame_crop_press)
+        canvas.bind("<B1-Motion>", self._on_frame_crop_drag)
+        canvas.bind("<ButtonRelease-1>", self._on_frame_crop_release)
+        canvas.bind("<Configure>", lambda _event: self._render_frame_crop_preview())
+        self._clear_frame_crop_preview()
+
+    def load_frame_crop_preview(self, show_message: bool = True) -> None:
+        video_path = self.frame_source_path
+        if video_path is None:
+            raw_path = self.frame_video_var.get().strip()
+            if raw_path and raw_path != "未选择":
+                video_path = Path(raw_path)
+        if video_path is None or not video_path.exists():
+            if show_message:
+                messagebox.showinfo("需要选择视频", "请先选择一个视频。")
+            return
+        seconds = parse_timecode(self.frame_start_var.get()) or 0.0
+        self.frame_status_var.set("读取裁剪预览中...")
+
+        def worker() -> None:
+            image = None
+            error: Exception | None = None
+            try:
+                image = extract_preview_frame(video_path, self.config.ffmpeg_path, seconds)
+            except Exception as exc:
+                error = exc
+            self.root.after(0, lambda: self._on_frame_crop_preview_done(image, error, show_message))
+
+        threading.Thread(target=worker, name="frame-crop-preview", daemon=True).start()
+
+    def _on_frame_crop_preview_done(self, image: Image.Image | None, error: Exception | None, show_message: bool = True) -> None:
+        if error is not None:
+            self.frame_status_var.set(f"裁剪预览读取失败：{error}")
+            if show_message:
+                messagebox.showerror("裁剪预览失败", str(error))
+            return
+        if image is None:
+            return
+        if self.frame_crop_preview_original is not None:
+            self.frame_crop_preview_original.close()
+        self.frame_crop_preview_original = image
+        self.frame_status_var.set("裁剪预览已读取；拖拽框选区域，不框选则默认全屏。")
+        self._render_frame_crop_preview()
+
+    def reset_frame_crop(self) -> None:
+        self.frame_crop_enabled_var.set(False)
+        self.frame_crop_x_var.set("0")
+        self.frame_crop_y_var.set("0")
+        self.frame_crop_w_var.set("")
+        self.frame_crop_h_var.set("")
+        self._render_frame_crop_preview()
+        self._on_config_changed()
+
+    def _clear_frame_crop_preview(self) -> None:
+        if self.frame_crop_preview_original is not None:
+            self.frame_crop_preview_original.close()
+        self.frame_crop_preview_original = None
+        self.frame_crop_preview_photo = None
+        self.frame_crop_drag_start = None
+        self.frame_crop_rect_id = None
+        canvas = self.frame_crop_canvas
+        if canvas is None:
+            return
+        canvas.delete("all")
+        width = max(1, canvas.winfo_width() or int(canvas.cget("width")))
+        height = max(1, canvas.winfo_height() or int(canvas.cget("height")))
+        canvas.create_text(
+            width // 2,
+            height // 2,
+            text="选择视频后自动预览首帧",
+            fill="#dfe7ec",
+            font=("Segoe UI", 10),
+        )
+
+    def _render_frame_crop_preview(self) -> None:
+        canvas = self.frame_crop_canvas
+        image = self.frame_crop_preview_original
+        if canvas is None:
+            return
+        if image is None:
+            self._clear_frame_crop_preview()
+            return
+
+        canvas_width = max(1, canvas.winfo_width() or int(canvas.cget("width")))
+        canvas_height = max(1, canvas.winfo_height() or int(canvas.cget("height")))
+        scale = min(canvas_width / image.width, canvas_height / image.height)
+        display_width = max(1, round(image.width * scale))
+        display_height = max(1, round(image.height * scale))
+        offset_x = max(0, (canvas_width - display_width) // 2)
+        offset_y = max(0, (canvas_height - display_height) // 2)
+        preview = image.resize((display_width, display_height), Image.Resampling.LANCZOS)
+        self.frame_crop_preview_photo = ImageTk.PhotoImage(preview)
+        self.frame_crop_preview_scale = scale
+        self.frame_crop_preview_offset = (offset_x, offset_y)
+
+        canvas.delete("all")
+        canvas.create_image(offset_x, offset_y, image=self.frame_crop_preview_photo, anchor="nw")
+        self._draw_frame_crop_rect_from_vars()
+
+    def _draw_frame_crop_rect_from_vars(self) -> None:
+        canvas = self.frame_crop_canvas
+        image = self.frame_crop_preview_original
+        if canvas is None or image is None or not self.frame_crop_enabled_var.get():
+            return
+        width = self._safe_int_string(self.frame_crop_w_var, 0, 0, image.width)
+        height = self._safe_int_string(self.frame_crop_h_var, 0, 0, image.height)
+        if width <= 0 or height <= 0:
+            return
+        x = self._safe_int_string(self.frame_crop_x_var, 0, 0, image.width - 1)
+        y = self._safe_int_string(self.frame_crop_y_var, 0, 0, image.height - 1)
+        scale = self.frame_crop_preview_scale
+        offset_x, offset_y = self.frame_crop_preview_offset
+        x1 = offset_x + round(x * scale)
+        y1 = offset_y + round(y * scale)
+        x2 = offset_x + round(min(image.width, x + width) * scale)
+        y2 = offset_y + round(min(image.height, y + height) * scale)
+        self.frame_crop_rect_id = canvas.create_rectangle(x1, y1, x2, y2, outline="#ffd166", width=2)
+
+    def _on_frame_crop_press(self, event: tk.Event) -> str | None:
+        if self.frame_crop_preview_original is None:
+            return "break"
+        self.frame_crop_drag_start = self._clamp_frame_crop_canvas_point(int(event.x), int(event.y))
+        canvas = self.frame_crop_canvas
+        if canvas is not None:
+            if self.frame_crop_rect_id is not None:
+                canvas.delete(self.frame_crop_rect_id)
+            x, y = self.frame_crop_drag_start
+            self.frame_crop_rect_id = canvas.create_rectangle(x, y, x, y, outline="#ffd166", width=2)
+        return "break"
+
+    def _on_frame_crop_drag(self, event: tk.Event) -> str | None:
+        if self.frame_crop_drag_start is None or self.frame_crop_rect_id is None or self.frame_crop_canvas is None:
+            return "break"
+        x1, y1 = self.frame_crop_drag_start
+        x2, y2 = self._clamp_frame_crop_canvas_point(int(event.x), int(event.y))
+        self.frame_crop_canvas.coords(self.frame_crop_rect_id, x1, y1, x2, y2)
+        return "break"
+
+    def _on_frame_crop_release(self, event: tk.Event) -> str | None:
+        image = self.frame_crop_preview_original
+        if image is None or self.frame_crop_drag_start is None:
+            return "break"
+        x1, y1 = self.frame_crop_drag_start
+        x2, y2 = self._clamp_frame_crop_canvas_point(int(event.x), int(event.y))
+        self.frame_crop_drag_start = None
+        left, right = sorted((x1, x2))
+        top, bottom = sorted((y1, y2))
+        if right - left < 3 or bottom - top < 3:
+            self._render_frame_crop_preview()
+            return "break"
+        offset_x, offset_y = self.frame_crop_preview_offset
+        scale = self.frame_crop_preview_scale
+        crop_x = max(0, min(image.width - 1, round((left - offset_x) / scale)))
+        crop_y = max(0, min(image.height - 1, round((top - offset_y) / scale)))
+        crop_right = max(crop_x + 1, min(image.width, round((right - offset_x) / scale)))
+        crop_bottom = max(crop_y + 1, min(image.height, round((bottom - offset_y) / scale)))
+        self.frame_crop_enabled_var.set(True)
+        self.frame_crop_x_var.set(str(crop_x))
+        self.frame_crop_y_var.set(str(crop_y))
+        self.frame_crop_w_var.set(str(crop_right - crop_x))
+        self.frame_crop_h_var.set(str(crop_bottom - crop_y))
+        self._render_frame_crop_preview()
+        self._on_config_changed()
+        return "break"
+
+    def _clamp_frame_crop_canvas_point(self, x: int, y: int) -> tuple[int, int]:
+        image = self.frame_crop_preview_original
+        if image is None:
+            return x, y
+        scale = self.frame_crop_preview_scale
+        offset_x, offset_y = self.frame_crop_preview_offset
+        min_x = offset_x
+        min_y = offset_y
+        max_x = offset_x + round(image.width * scale)
+        max_y = offset_y + round(image.height * scale)
+        return max(min_x, min(max_x, x)), max(min_y, min(max_y, y))
+
+    def estimate_frame_sampling(self, show_message: bool = True) -> None:
+        try:
+            config = self._build_frame_sampler_config()
+            info = self.frame_video_info or probe_video(config.video_path, self.config.ffmpeg_path)
+            self.frame_video_info = info
+            estimate = estimate_sampling(config, info)
+        except Exception as exc:
+            self.frame_status_var.set(f"预估失败：{exc}")
+            if show_message:
+                messagebox.showerror("预估失败", str(exc))
+            return
+        self.frame_duration_var.set(format_timecode(info.duration_seconds))
+        self.frame_resolution_var.set(f"{info.width}x{info.height}")
+        self.frame_count_var.set(str(estimate.frame_count))
+        self.frame_sheet_count_var.set(str(estimate.sheet_count))
+        self.frame_eta_var.set(f"约 {estimate.estimated_processing_seconds:.0f} 秒")
+        self.frame_status_var.set(
+            f"预计抽帧 {estimate.frame_count} 张，生成 {estimate.sheet_count} 张合成图；"
+            f"范围 {format_timecode(estimate.effective_start_seconds)} - {format_timecode(estimate.effective_end_seconds)}。"
+        )
+        self._sync_frame_config_from_ui()
+        self._save_config()
+
+    def run_frame_sampling(self) -> None:
+        if self.frame_is_running:
+            return
+        try:
+            if self.frame_output_is_default:
+                self._refresh_frame_default_output_dir(force=True)
+            config = self._build_frame_sampler_config()
+            info = self.frame_video_info or probe_video(config.video_path, self.config.ffmpeg_path)
+            estimate = estimate_sampling(config, info)
+        except Exception as exc:
+            messagebox.showerror("无法开始", str(exc))
+            return
+        self.frame_video_info = info
+        self._set_frame_running(True)
+        self.frame_count_var.set(str(estimate.frame_count))
+        self.frame_sheet_count_var.set(str(estimate.sheet_count))
+        self.frame_eta_var.set(f"约 {estimate.estimated_processing_seconds:.0f} 秒")
+
+        def progress(done: int, total: int, message: str) -> None:
+            self.root.after(0, lambda: self._update_frame_progress(done, total, message))
+
+        def worker() -> None:
+            result = None
+            error: Exception | None = None
+            try:
+                result = sample_video_to_sheets(config, self.config.ffmpeg_path, progress)
+            except Exception as exc:
+                error = exc
+            self.root.after(0, lambda: self._on_frame_sampling_done(result, error))
+
+        threading.Thread(target=worker, name="frame-sampler", daemon=True).start()
+
+    def _set_frame_running(self, running: bool) -> None:
+        self.frame_is_running = running
+        state = "disabled" if running else "normal"
+        self.frame_estimate_button.configure(state=state)
+        self.frame_generate_button.configure(state=state)
+        self.frame_status_var.set("生成中..." if running else "就绪")
+
+    def _update_frame_progress(self, done: int, total: int, message: str) -> None:
+        if total <= 0:
+            self.frame_progress_var.set(message)
+            return
+        self.frame_progress_var.set(f"{done}/{total} · {message}")
+
+    def _on_frame_sampling_done(self, result: Any, error: Exception | None) -> None:
+        self._set_frame_running(False)
+        if error is not None:
+            self.frame_status_var.set(f"生成失败：{error}")
+            self.frame_progress_var.set("")
+            messagebox.showerror("生成失败", str(error))
+            return
+        if result is None:
+            self.frame_status_var.set("生成失败")
+            return
+        self.frame_output_dir = result.output_dir
+        self.frame_output_var.set(str(result.output_dir))
+        self.frame_default_output_dir = result.output_dir
+        self.frame_output_is_default = True
+        self.frame_open_button.configure(state="normal")
+        self.frame_status_var.set(
+            f"已生成 {len(result.sheet_paths)} 张合成图，索引和预览页已写入输出目录。"
+        )
+        self.frame_progress_var.set("完成")
+
+    def open_frame_output(self) -> None:
+        path = self.frame_output_dir or Path(self.frame_output_var.get() or "")
+        if not path:
+            messagebox.showinfo("没有输出", "请先生成合成图。")
+            return
+        path.mkdir(parents=True, exist_ok=True)
+        os.startfile(path)
+
+    def _build_frame_sampler_config(self) -> FrameSamplerConfig:
+        if self.frame_source_path is None:
+            raw_path = self.frame_video_var.get().strip()
+            if not raw_path or raw_path == "未选择":
+                raise ValueError("请先选择视频。")
+            self.frame_source_path = Path(raw_path)
+        video_path = self.frame_source_path.resolve()
+        if not video_path.exists():
+            raise FileNotFoundError(video_path)
+
+        output_dir = Path(self.frame_output_var.get().strip() or "").resolve()
+        if not str(output_dir):
+            raise ValueError("请设置输出目录。")
+
+        start = parse_timecode(self.frame_start_var.get()) or 0.0
+        end = parse_timecode(self.frame_end_var.get())
+        interval = self._safe_float_string(self.frame_interval_var, 10.0, 0.1, 3600.0)
+        cols = self._safe_int_string(self.frame_cols_var, 5, 1, 12)
+        rows = self._safe_int_string(self.frame_rows_var, 6, 1, 12)
+        thumb_width = self._safe_int_string(self.frame_thumb_width_var, 360, 120, 1600)
+        quality, output_format = self._frame_quality_settings()
+
+        crop = None
+        if self.frame_crop_enabled_var.get():
+            crop_width = self._safe_int_string(self.frame_crop_w_var, 0, 0, 100000)
+            crop_height = self._safe_int_string(self.frame_crop_h_var, 0, 0, 100000)
+            if crop_width > 0 and crop_height > 0:
+                crop = CropRegion(
+                    x=self._safe_int_string(self.frame_crop_x_var, 0, 0, 100000),
+                    y=self._safe_int_string(self.frame_crop_y_var, 0, 0, 100000),
+                    width=crop_width,
+                    height=crop_height,
+                )
+
+        dense_ranges = self._collect_frame_dense_ranges()
+
+        return FrameSamplerConfig(
+            video_path=video_path,
+            output_dir=output_dir,
+            start_seconds=start,
+            end_seconds=end,
+            interval_seconds=interval,
+            sheet_cols=cols,
+            sheet_rows=rows,
+            thumb_width=thumb_width,
+            jpeg_quality=quality,
+            output_format=output_format,
+            show_timestamp=self.frame_show_timestamp_var.get(),
+            show_index=self.frame_show_index_var.get(),
+            crop=crop,
+            dense_ranges=dense_ranges,
+            click_events_path=self.frame_click_events_path,
+            draw_click_markers=self.frame_draw_click_markers_var.get(),
+            click_match_window_seconds=max(0.1, float(self.config.frame_sampler_click_match_window_seconds or 0.5)),
+        )
+
+    def _frame_quality_settings(self) -> tuple[int, str]:
+        preset = self.frame_quality_preset_var.get().strip()
+        if preset == "低":
+            return 65, "jpg"
+        if preset == "中":
+            return 80, "jpg"
+        if preset == "无损":
+            return 100, "png"
+        return 90, "jpg"
+
+    def _collect_frame_dense_ranges(self) -> list[DenseRange]:
+        dense_ranges: list[DenseRange] = []
+        for index, row in enumerate(self.frame_dense_ranges, start=1):
+            start_text = row["start"].get().strip()
+            end_text = row["end"].get().strip()
+            interval_text = row["interval"].get().strip()
+            if not start_text and not end_text:
+                continue
+            if not start_text or not end_text:
+                raise ValueError(f"关键段第 {index} 行需要同时填写开始和结束时间。")
+            start = parse_timecode(start_text)
+            end = parse_timecode(end_text)
+            if start is None or end is None:
+                raise ValueError(f"关键段第 {index} 行时间格式不正确。")
+            if end <= start:
+                raise ValueError(f"关键段第 {index} 行的结束时间必须大于开始时间。")
+            try:
+                interval = float(interval_text or "2")
+            except ValueError as exc:
+                raise ValueError(f"关键段第 {index} 行的间隔秒必须是数字。") from exc
+            dense_ranges.append(DenseRange(start, end, max(0.1, min(3600.0, interval))))
+        return dense_ranges
+
+    def _sync_frame_config_from_ui(self) -> None:
+        output_text = self.frame_output_var.get().strip()
+        try:
+            output_path = Path(output_text)
+            if output_path.is_absolute():
+                self.config.frame_sampler_output_root = str(output_path.parent)
+            else:
+                self.config.frame_sampler_output_root = output_text or "frame_sheets"
+        except OSError:
+            self.config.frame_sampler_output_root = "frame_sheets"
+        self.config.frame_sampler_start = self.frame_start_var.get().strip()
+        self.config.frame_sampler_end = self.frame_end_var.get().strip()
+        self.config.frame_sampler_interval_seconds = self._safe_float_string(self.frame_interval_var, 10.0, 0.1, 3600.0)
+        self.config.frame_sampler_cols = self._safe_int_string(self.frame_cols_var, 5, 1, 12)
+        self.config.frame_sampler_rows = self._safe_int_string(self.frame_rows_var, 6, 1, 12)
+        self.config.frame_sampler_thumb_width = self._safe_int_string(self.frame_thumb_width_var, 360, 120, 1600)
+        quality, _output_format = self._frame_quality_settings()
+        self.config.frame_sampler_jpeg_quality = quality
+        self.config.frame_sampler_quality_preset = self.frame_quality_preset_var.get().strip() or "高"
+        self.config.frame_sampler_show_timestamp = self.frame_show_timestamp_var.get()
+        self.config.frame_sampler_show_index = self.frame_show_index_var.get()
+        dense_rows = [
+            {
+                "start": row["start"].get().strip(),
+                "end": row["end"].get().strip(),
+                "interval": row["interval"].get().strip() or "2",
+            }
+            for row in self.frame_dense_ranges
+            if row["start"].get().strip() or row["end"].get().strip()
+        ]
+        self.config.frame_sampler_dense_enabled = bool(dense_rows)
+        self.config.frame_sampler_dense_ranges = dense_rows
+        if dense_rows:
+            first_dense = dense_rows[0]
+            self.config.frame_sampler_dense_start = first_dense["start"]
+            self.config.frame_sampler_dense_end = first_dense["end"]
+            try:
+                self.config.frame_sampler_dense_interval_seconds = max(0.1, float(first_dense["interval"]))
+            except ValueError:
+                self.config.frame_sampler_dense_interval_seconds = 2.0
+        else:
+            self.config.frame_sampler_dense_start = ""
+            self.config.frame_sampler_dense_end = ""
+            self.config.frame_sampler_dense_interval_seconds = 2.0
+        self.config.frame_sampler_crop_enabled = self.frame_crop_enabled_var.get()
+        self.config.frame_sampler_crop_x = self._safe_int_string(self.frame_crop_x_var, 0, 0, 100000)
+        self.config.frame_sampler_crop_y = self._safe_int_string(self.frame_crop_y_var, 0, 0, 100000)
+        self.config.frame_sampler_crop_width = self._safe_int_string(self.frame_crop_w_var, 0, 0, 100000)
+        self.config.frame_sampler_crop_height = self._safe_int_string(self.frame_crop_h_var, 0, 0, 100000)
+        self.config.frame_sampler_draw_click_markers = self.frame_draw_click_markers_var.get()
+        self.config.frame_sampler_click_events_path = str(self.frame_click_events_path or "")
+        self.config.frame_sampler_click_match_window_seconds = 0.5
+
     def on_close(self) -> None:
         if self.is_counting_down:
             self.is_counting_down = False
@@ -1089,6 +1910,7 @@ class ScreenMouseRecorderApp:
         if self.is_recording or self.is_starting or self.is_stopping or self.is_paused or self.is_pausing or self.is_counting_down:
             return
         self._sync_config_from_ui()
+        self._sync_frame_config_from_ui()
         self._save_config()
         self._apply_recording_banner_visibility()
         self._refresh_environment()
@@ -1216,53 +2038,53 @@ class ScreenMouseRecorderApp:
             self.calibrate_button.configure(state="normal" if self.region is not None else "disabled")
             self.cancel_region_button.configure(state="normal" if self.region is not None else "disabled")
         if counting_down:
-            self.primary_button.configure(text="▶", state="disabled", bg="#9aa8b1", activebackground="#9aa8b1")
+            self.primary_button.configure(text="▶", state="disabled", bg="#9a9a9a", activebackground="#9a9a9a")
             self.finish_button.configure(state="disabled")
             self.pause_button.configure(state="disabled")
-            self.status_badge.configure(bg="#ffd166", fg="#17212b")
-            self.recording_banner.configure(bg="#fff3cd", fg="#5c4400")
+            self.status_badge.configure(bg=COLORS["yellow"], fg=COLORS["text"])
+            self.recording_banner.configure(bg=COLORS["warning_bg"], fg=COLORS["warning_text"])
             self.recording_banner_var.set("倒计时")
         elif starting:
-            self.primary_button.configure(text="▶", state="disabled", bg="#9aa8b1", activebackground="#9aa8b1")
+            self.primary_button.configure(text="▶", state="disabled", bg="#9a9a9a", activebackground="#9a9a9a")
             self.finish_button.configure(state="disabled")
             self.pause_button.configure(state="disabled")
-            self.status_badge.configure(bg="#ffd166", fg="#17212b")
-            self.recording_banner.configure(bg="#fff3cd", fg="#5c4400")
+            self.status_badge.configure(bg=COLORS["yellow"], fg=COLORS["text"])
+            self.recording_banner.configure(bg=COLORS["warning_bg"], fg=COLORS["warning_text"])
             self.recording_banner_var.set("启动中")
         elif recording:
-            self.primary_button.configure(text="▶", state="disabled", bg="#9aa8b1", activebackground="#9aa8b1")
+            self.primary_button.configure(text="▶", state="disabled", bg="#9a9a9a", activebackground="#9a9a9a")
             self.finish_button.configure(state="normal")
             self.pause_button.configure(state="normal")
-            self.status_badge.configure(bg="#d83b3b", fg="white")
-            self.recording_banner.configure(bg="#d83b3b", fg="white")
+            self.status_badge.configure(bg=COLORS["red"], fg="white")
+            self.recording_banner.configure(bg=COLORS["red"], fg="white")
             self.recording_banner_var.set("录制中")
         elif pausing:
-            self.primary_button.configure(text="▶", state="disabled", bg="#9aa8b1", activebackground="#9aa8b1")
+            self.primary_button.configure(text="▶", state="disabled", bg="#9a9a9a", activebackground="#9a9a9a")
             self.finish_button.configure(state="disabled")
             self.pause_button.configure(state="disabled")
-            self.status_badge.configure(bg="#ffd166", fg="#17212b")
-            self.recording_banner.configure(bg="#fff3cd", fg="#5c4400")
+            self.status_badge.configure(bg=COLORS["yellow"], fg=COLORS["text"])
+            self.recording_banner.configure(bg=COLORS["warning_bg"], fg=COLORS["warning_text"])
             self.recording_banner_var.set("暂停中")
         elif paused:
-            self.primary_button.configure(text="▶", state="normal", bg="#1f9d55", activebackground="#1f9d55")
+            self.primary_button.configure(text="▶", state="normal", bg=COLORS["green"], activebackground=COLORS["green"])
             self.finish_button.configure(state="normal")
             self.pause_button.configure(state="disabled")
-            self.status_badge.configure(bg="#60717d", fg="white")
-            self.recording_banner.configure(bg="#60717d", fg="white")
+            self.status_badge.configure(bg=COLORS["muted"], fg="white")
+            self.recording_banner.configure(bg=COLORS["muted"], fg="white")
             self.recording_banner_var.set("已暂停")
         elif stopping:
-            self.primary_button.configure(text="▶", state="disabled", bg="#9aa8b1", activebackground="#9aa8b1")
+            self.primary_button.configure(text="▶", state="disabled", bg="#9a9a9a", activebackground="#9a9a9a")
             self.finish_button.configure(state="disabled")
             self.pause_button.configure(state="disabled")
-            self.status_badge.configure(bg="#ffd166", fg="#17212b")
-            self.recording_banner.configure(bg="#fff3cd", fg="#5c4400")
+            self.status_badge.configure(bg=COLORS["yellow"], fg=COLORS["text"])
+            self.recording_banner.configure(bg=COLORS["warning_bg"], fg=COLORS["warning_text"])
             self.recording_banner_var.set("保存中")
         else:
-            self.primary_button.configure(text="▶", state="normal", bg="#1f9d55", activebackground="#1f9d55")
+            self.primary_button.configure(text="▶", state="normal", bg=COLORS["green"], activebackground=COLORS["green"])
             self.finish_button.configure(state="disabled")
             self.pause_button.configure(state="disabled")
-            self.status_badge.configure(bg="#dfe7ec", fg="#263238")
-            self.recording_banner.configure(bg="#dfe7ec", fg="#263238")
+            self.status_badge.configure(bg=COLORS["panel_alt"], fg=COLORS["text_secondary"])
+            self.recording_banner.configure(bg=COLORS["panel_alt"], fg=COLORS["text_secondary"])
             if self.storage is None:
                 self.recording_banner_var.set("未开始")
             else:
@@ -1283,6 +2105,22 @@ class ScreenMouseRecorderApp:
     def _safe_int(variable: tk.IntVar, default: int, minimum: int, maximum: int) -> int:
         try:
             value = int(variable.get())
+        except (tk.TclError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    @staticmethod
+    def _safe_int_string(variable: tk.StringVar, default: int, minimum: int, maximum: int) -> int:
+        try:
+            value = int(float(str(variable.get()).strip()))
+        except (tk.TclError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    @staticmethod
+    def _safe_float_string(variable: tk.StringVar, default: float, minimum: float, maximum: float) -> float:
+        try:
+            value = float(str(variable.get()).strip())
         except (tk.TclError, ValueError):
             value = default
         return max(minimum, min(maximum, value))

@@ -1,23 +1,49 @@
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$BundledPython = "C:\Users\SEASUN\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+$RuntimePython = Join-Path $Root ".runtime\python\python.exe"
+$ScriptArgs = $args
+$env:PYTHONDONTWRITEBYTECODE = "1"
 
-if (Test-Path -LiteralPath $BundledPython) {
-    & $BundledPython "$Root\run.py" @args
-    exit $LASTEXITCODE
+function Invoke-RecorderPython {
+    param([string] $PythonExe)
+    & $PythonExe "$Root\run.py" @ScriptArgs
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        Read-Host "Press Enter to close"
+    }
+    exit $code
+}
+
+if (Test-Path -LiteralPath $RuntimePython) {
+    Invoke-RecorderPython $RuntimePython
 }
 
 $PyLauncher = Get-Command py -ErrorAction SilentlyContinue
 if ($PyLauncher) {
-    & py -3 "$Root\run.py" @args
-    exit $LASTEXITCODE
+    & py -3 --version *> $null
+    if ($LASTEXITCODE -eq 0) {
+        & py -3 "$Root\run.py" @args
+        $code = $LASTEXITCODE
+        if ($code -ne 0) {
+            Read-Host "Press Enter to close"
+        }
+        exit $code
+    }
 }
 
-$Python = Get-Command python -ErrorAction SilentlyContinue
-if ($Python) {
-    & python "$Root\run.py" @args
-    exit $LASTEXITCODE
+foreach ($name in @("python", "python3")) {
+    $Python = Get-Command $name -ErrorAction SilentlyContinue
+    if ($Python) {
+        & $name --version *> $null
+        if ($LASTEXITCODE -eq 0) {
+            Invoke-RecorderPython $name
+        }
+    }
 }
 
-Write-Error "Python 3 was not found. Install Python 3.10+ or run with the bundled Codex Python path."
+Write-Host "Python 3 was not found."
+Write-Host "Put Python at .runtime\python\python.exe or install Python 3.10+ and run:"
+Write-Host "python -m pip install -r requirements.txt"
+Read-Host "Press Enter to close"
+exit 1

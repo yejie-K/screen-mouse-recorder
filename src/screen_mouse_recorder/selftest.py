@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+from . import __version__
 from .config import AppConfig
 from .models import Region, TimingContext, monotonic_ms, wall_time_iso
 from .mouse_logger import MouseActivityLogger
@@ -183,7 +184,7 @@ def _build_meta(
     return {
         "schema_version": "1.0",
         "session_id": timing.session_id,
-        "app_version": "0.1.0",
+        "app_version": __version__,
         "platform": "windows",
         "created_at": wall_time_iso(),
         "recording_region": region.to_dict(),

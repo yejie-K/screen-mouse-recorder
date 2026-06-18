@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 import json
 from pathlib import Path
 from typing import Any
@@ -27,6 +27,30 @@ class AppConfig:
     calibration_click_tolerance_px: int = 80
     calibration_residual_warning_px: int = 20
     ffmpeg_path: str | None = None
+    frame_sampler_output_root: str = "frame_sheets"
+    frame_sampler_start: str = "00:00"
+    frame_sampler_end: str = ""
+    frame_sampler_interval_seconds: float = 10.0
+    frame_sampler_cols: int = 5
+    frame_sampler_rows: int = 6
+    frame_sampler_thumb_width: int = 360
+    frame_sampler_jpeg_quality: int = 85
+    frame_sampler_quality_preset: str = "高"
+    frame_sampler_show_timestamp: bool = True
+    frame_sampler_show_index: bool = True
+    frame_sampler_dense_enabled: bool = False
+    frame_sampler_dense_start: str = ""
+    frame_sampler_dense_end: str = ""
+    frame_sampler_dense_interval_seconds: float = 2.0
+    frame_sampler_dense_ranges: list[dict[str, str]] = field(default_factory=list)
+    frame_sampler_crop_enabled: bool = False
+    frame_sampler_crop_x: int = 0
+    frame_sampler_crop_y: int = 0
+    frame_sampler_crop_width: int = 0
+    frame_sampler_crop_height: int = 0
+    frame_sampler_draw_click_markers: bool = False
+    frame_sampler_click_events_path: str = ""
+    frame_sampler_click_match_window_seconds: float = 0.5
 
     @classmethod
     def load(cls, path: Path) -> "AppConfig":

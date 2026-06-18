@@ -55,8 +55,10 @@ def metric_card(
 ) -> tk.Frame:
     frame = tk.Frame(parent, bg=COLORS["panel_alt"], highlightbackground=COLORS["border"], highlightthickness=1)
     frame.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else padx[0], padx[1]))
-    tk.Label(frame, textvariable=variable, bg=COLORS["panel_alt"], fg=COLORS["text"], font=value_font).pack(pady=(8, 0))
-    tk.Label(frame, text=label, bg=COLORS["panel_alt"], fg=COLORS["muted"], font=label_font).pack(pady=(0, 8))
+    frame.configure(height=58)
+    frame.pack_propagate(False)
+    tk.Label(frame, textvariable=variable, bg=COLORS["panel_alt"], fg=COLORS["text"], font=value_font).pack(pady=(7, 0))
+    tk.Label(frame, text=label, bg=COLORS["panel_alt"], fg=COLORS["muted"], font=label_font).pack(pady=(0, 6))
     return frame
 
 
@@ -70,12 +72,14 @@ def analysis_output_row(
 ) -> tk.Label:
     frame = tk.Frame(parent, bg=COLORS["panel_row"], highlightbackground=COLORS["border"], highlightthickness=1)
     frame.grid(row=row, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0), pady=(0, 8))
+    frame.configure(height=60)
+    frame.grid_propagate(False)
     frame.columnconfigure(1, weight=1)
 
     badge = tk.Label(
         frame,
         textvariable=status_var,
-        bg=COLORS["border_soft"],
+        bg=COLORS["panel_alt"],
         fg=COLORS["text_secondary"],
         width=6,
         font=FONT_SMALL_BOLD,
@@ -91,6 +95,106 @@ def analysis_output_row(
     return badge
 
 
+class ToggleRow(tk.Frame):
+    def __init__(
+        self,
+        parent: tk.Widget,
+        root: tk.Tk,
+        text: str,
+        variable: tk.BooleanVar,
+        tooltip: str,
+        *,
+        command: Callable[[], None] | None = None,
+        strong: bool = False,
+    ) -> None:
+        super().__init__(
+            parent,
+            bg=COLORS["panel_row"],
+            highlightbackground=COLORS["border_soft"],
+            highlightthickness=1,
+            cursor="hand2",
+        )
+        self._state = "normal"
+        self.root = root
+        self.variable = variable
+        self.command = command
+        self.text = text
+        self.strong = strong
+        self.configure(height=42 if strong else 36)
+        self.grid_propagate(False)
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self.indicator = tk.Label(
+            self,
+            bg=COLORS["panel_row"],
+            fg=COLORS["muted"],
+            width=2,
+            anchor="center",
+            font=("Segoe UI", 10, "bold"),
+            cursor="hand2",
+        )
+        self.indicator.grid(row=0, column=0, sticky="ns", padx=(10, 6), pady=0)
+
+        self.label = tk.Label(
+            self,
+            text=text,
+            bg=COLORS["panel_row"],
+            fg=COLORS["text_secondary"],
+            anchor="w",
+            justify="left",
+            font=FONT_UI_BOLD if strong else FONT_UI,
+            cursor="hand2",
+        )
+        self.label.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=0)
+
+        self.variable.trace_add("write", lambda *_args: self._sync_state())
+        for target in (self, self.indicator, self.label):
+            target.bind("<ButtonRelease-1>", self._toggle_from_event)
+            Tooltip(target, tooltip)
+        self._sync_state()
+
+    def _toggle_from_event(self, _event: tk.Event | None = None) -> str:
+        if self._state != "disabled":
+            self.variable.set(not bool(self.variable.get()))
+            if self.command is not None:
+                self.command()
+        self.root.focus_set()
+        return "break"
+
+    def _sync_state(self) -> None:
+        selected = bool(self.variable.get())
+        bg = COLORS["green_soft"] if selected else COLORS["panel_row"]
+        fg = COLORS["text"] if selected else COLORS["text_secondary"]
+        indicator_fg = COLORS["green"] if selected else COLORS["muted"]
+        border = COLORS["green"] if selected else COLORS["border_soft"]
+        self.configure(bg=bg, highlightbackground=border)
+        self.indicator.configure(text="✓" if selected else "□", bg=bg, fg=indicator_fg)
+        self.label.configure(bg=bg, fg=fg)
+
+    def configure(self, cnf: dict[str, object] | None = None, **kwargs: object) -> object:
+        state = None
+        if cnf is not None and "state" in cnf:
+            cnf = dict(cnf)
+            state = cnf.pop("state")
+        if "state" in kwargs:
+            state = kwargs.pop("state")
+        result = super().configure(cnf, **kwargs)
+        if state is not None and hasattr(self, "indicator"):
+            self._state = str(state)
+            disabled = self._state == "disabled"
+            cursor = "" if disabled else "hand2"
+            self.indicator.configure(fg="#9a9a9a" if disabled else (COLORS["green"] if self.variable.get() else COLORS["muted"]), cursor=cursor)
+            self.label.configure(fg="#9a9a9a" if disabled else (COLORS["text"] if self.variable.get() else COLORS["text_secondary"]), cursor=cursor)
+            super().configure(cursor=cursor)
+        return result
+
+    def cget(self, key: str) -> object:
+        if key == "state":
+            return self._state
+        return super().cget(key)
+
+
 def option_checkbutton(
     parent: tk.Widget,
     root: tk.Tk,
@@ -101,53 +205,9 @@ def option_checkbutton(
     *,
     column: int = 0,
     command: Callable[[], None] | None = None,
-) -> tk.Checkbutton:
-    frame = tk.Frame(parent, bg=COLORS["panel_row"], highlightbackground=COLORS["border_soft"], highlightthickness=1)
-    frame.grid(row=row, column=column, sticky="ew", padx=(0, 8 if column == 0 else 0), pady=4)
-    frame.columnconfigure(0, weight=1)
-    widget = tk.Checkbutton(
-        frame,
-        text=text,
-        variable=variable,
-        command=command,
-        takefocus=False,
-        highlightthickness=0,
-        bd=0,
-        bg=COLORS["panel_row"],
-        fg=COLORS["text_secondary"],
-        activebackground=COLORS["panel_row"],
-        activeforeground=COLORS["text"],
-        selectcolor=COLORS["panel_row"],
-        disabledforeground="#9aa8b1",
-        anchor="w",
-        justify="left",
-        font=FONT_UI,
-        padx=8,
-        pady=8,
-        cursor="hand2",
-    )
-    widget.grid(row=0, column=0, sticky="ew")
-
-    def sync_state(*_args: object) -> None:
-        selected = bool(variable.get())
-        bg = "#edf7f1" if selected else COLORS["panel_row"]
-        fg = COLORS["text"] if selected else COLORS["text_secondary"]
-        frame.configure(bg=bg, highlightbackground=COLORS["green"] if selected else COLORS["border_soft"])
-        widget.configure(bg=bg, fg=fg, activebackground=bg, selectcolor=bg)
-
-    sync_state()
-    variable.trace_add("write", sync_state)
-    widget.bind("<ButtonRelease-1>", lambda _event: root.focus_set(), add="+")
-    frame.configure(cursor="hand2")
-
-    def invoke_from_frame(_event: tk.Event) -> str:
-        if str(widget.cget("state")) != "disabled":
-            widget.invoke()
-        root.focus_set()
-        return "break"
-
-    frame.bind("<ButtonRelease-1>", invoke_from_frame)
-    Tooltip(widget, tooltip)
+) -> ToggleRow:
+    widget = ToggleRow(parent, root, text, variable, tooltip, command=command)
+    widget.grid(row=row, column=column, sticky="ew", padx=(0, 0), pady=2)
     return widget
 
 
@@ -161,58 +221,8 @@ def confirmation_checkbutton(
     *,
     command: Callable[[], None] | None = None,
 ) -> tk.Checkbutton:
-    frame = tk.Frame(parent, bg=COLORS["panel_row"], highlightbackground=COLORS["border"], highlightthickness=1)
-    frame.grid(row=row, column=0, sticky="ew", pady=(12, 0))
-    frame.columnconfigure(1, weight=1)
-
-    widget = tk.Checkbutton(
-        frame,
-        variable=variable,
-        command=command,
-        takefocus=False,
-        highlightthickness=0,
-        bd=0,
-        bg=COLORS["panel_row"],
-        activebackground=COLORS["panel_row"],
-        selectcolor=COLORS["panel_row"],
-        disabledforeground="#9aa8b1",
-        cursor="hand2",
-    )
-    widget.grid(row=0, column=0, sticky="ns", padx=(10, 6), pady=10)
-
-    label = tk.Label(
-        frame,
-        text=text,
-        bg=COLORS["panel_row"],
-        fg=COLORS["text_secondary"],
-        anchor="w",
-        font=FONT_UI_BOLD,
-        cursor="hand2",
-    )
-    label.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=10)
-
-    def sync_state(*_args: object) -> None:
-        selected = bool(variable.get())
-        bg = "#edf7f1" if selected else COLORS["panel_row"]
-        fg = COLORS["text"] if selected else COLORS["text_secondary"]
-        border = COLORS["green"] if selected else COLORS["border"]
-        frame.configure(bg=bg, highlightbackground=border, cursor="hand2")
-        widget.configure(bg=bg, activebackground=bg, selectcolor=bg)
-        label.configure(bg=bg, fg=fg)
-
-    def invoke_from_anywhere(_event: tk.Event) -> str:
-        if str(widget.cget("state")) != "disabled":
-            widget.invoke()
-        root.focus_set()
-        return "break"
-
-    sync_state()
-    variable.trace_add("write", sync_state)
-    for target in (frame, label):
-        target.bind("<ButtonRelease-1>", invoke_from_anywhere)
-    widget.bind("<ButtonRelease-1>", lambda _event: root.focus_set(), add="+")
-    Tooltip(frame, tooltip)
-    Tooltip(label, tooltip)
+    widget = ToggleRow(parent, root, text, variable, tooltip, command=command, strong=True)
+    widget.grid(row=row, column=0, sticky="ew", pady=(12, 0))
     return widget
 
 
@@ -227,8 +237,12 @@ def transport_button(parent: tk.Widget, text: str, command: Callable[[], None], 
         activeforeground="white",
         disabledforeground="#e4eaee",
         relief="flat",
+        bd=0,
+        highlightthickness=1,
+        highlightbackground=color,
+        highlightcolor=color,
         width=4,
-        height=2,
+        height=1,
         font=("Segoe UI", 18, "bold"),
         cursor="hand2",
     )
@@ -243,7 +257,7 @@ def number_field(
     from_: int,
     to: int,
 ) -> ttk.Spinbox:
-    ttk.Label(parent, text=text, style="Panel.TLabel").grid(row=row, column=column, sticky="w", pady=4)
+    ttk.Label(parent, text=text, style="Panel.TLabel").grid(row=row, column=column, sticky="w", pady=5, padx=(0, 6))
     spinbox = ttk.Spinbox(parent, textvariable=variable, from_=from_, to=to, width=8)
-    spinbox.grid(row=row, column=column + 1, sticky="w", padx=(8, 18), pady=4)
+    spinbox.grid(row=row, column=column + 1, sticky="ew", padx=(0, 12), pady=5)
     return spinbox
