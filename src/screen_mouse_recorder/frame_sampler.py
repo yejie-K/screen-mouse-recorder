@@ -63,7 +63,7 @@ class ClickKeyframeConfig:
     video_path: Path
     events_path: Path
     output_dir: Path
-    max_frames: int = 60
+    max_frames: int = 0
     sheet_cols: int = 5
     sheet_rows: int = 6
     thumb_width: int = 360
@@ -469,7 +469,7 @@ def load_click_keyframe_events(config: ClickKeyframeConfig) -> list[ClickKeyfram
 def select_click_keyframes(events: list[ClickKeyframeEvent], config: ClickKeyframeConfig) -> tuple[list[ClickKeyframeEvent], int]:
     selected: list[ClickKeyframeEvent] = []
     skipped = 0
-    max_frames = max(1, int(config.max_frames))
+    max_frames = max(0, int(config.max_frames))
 
     for event in events:
         # 去重逻辑暂时关闭，方便对照原始点击数据检查抽帧结果。
@@ -478,7 +478,7 @@ def select_click_keyframes(events: list[ClickKeyframeEvent], config: ClickKeyfra
         # if selected and _is_near_duplicate_click(selected[-1], event, time_threshold, distance_threshold):
         #     skipped += 1
         #     continue
-        if len(selected) >= max_frames:
+        if max_frames and len(selected) >= max_frames:
             skipped += 1
             continue
         selected.append(event)

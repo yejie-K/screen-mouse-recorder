@@ -1695,8 +1695,13 @@ class ScreenMouseRecorderApp:
                 self.frame_count_var.set(str(len(selected)))
                 self.frame_sheet_count_var.set(str(sheet_count))
                 self.frame_eta_var.set(f"约 {max(1, len(selected)) * 0.3:.0f} 秒")
+                limit_text = (
+                    "不设上限"
+                    if int(config.max_frames) <= 0
+                    else f"上限 {config.max_frames}，跳过 {skipped} 个"
+                )
                 self.frame_status_var.set(
-                    f"识别点击事件 {len(events)} 个，当前未去重，保留 {len(selected)} 张；超过上限跳过 {skipped} 个。"
+                    f"识别点击事件 {len(events)} 个，当前未去重，保留 {len(selected)} 张；{limit_text}。"
                 )
                 self._sync_frame_config_from_ui()
                 self._save_config()
@@ -1911,7 +1916,7 @@ class ScreenMouseRecorderApp:
             video_path=video_path,
             events_path=events_path.resolve(),
             output_dir=output_dir,
-            max_frames=self._safe_int_string(self.frame_keyframe_max_var, 60, 1, 500),
+            max_frames=self._safe_int_string(self.frame_keyframe_max_var, 0, 0, 100000),
             sheet_cols=self._safe_int_string(self.frame_cols_var, 5, 1, 12),
             sheet_rows=self._safe_int_string(self.frame_rows_var, 6, 1, 12),
             thumb_width=self._safe_int_string(self.frame_thumb_width_var, 360, 120, 1600),
@@ -1972,7 +1977,7 @@ class ScreenMouseRecorderApp:
         self.config.frame_sampler_cols = self._safe_int_string(self.frame_cols_var, 5, 1, 12)
         self.config.frame_sampler_rows = self._safe_int_string(self.frame_rows_var, 6, 1, 12)
         self.config.frame_sampler_thumb_width = self._safe_int_string(self.frame_thumb_width_var, 360, 120, 1600)
-        self.config.frame_sampler_keyframe_max_frames = self._safe_int_string(self.frame_keyframe_max_var, 60, 1, 500)
+        self.config.frame_sampler_keyframe_max_frames = self._safe_int_string(self.frame_keyframe_max_var, 0, 0, 100000)
         self.config.frame_sampler_keyframe_time_dedupe_ms = self._safe_int_string(
             self.frame_keyframe_time_dedupe_var, 0, 0, 10000
         )

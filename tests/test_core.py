@@ -93,7 +93,7 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(config.frame_sampler_rows, 6)
         self.assertTrue(config.frame_sampler_show_timestamp)
         self.assertEqual(config.frame_sampler_mode, "interval")
-        self.assertEqual(config.frame_sampler_keyframe_max_frames, 60)
+        self.assertEqual(config.frame_sampler_keyframe_max_frames, 0)
         self.assertTrue(config.frame_sampler_draw_click_markers)
 
     def test_frame_sampler_timecode_helpers(self) -> None:

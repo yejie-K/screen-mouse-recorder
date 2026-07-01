@@ -141,7 +141,7 @@ def _build_basic_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
         width=10,
     )
     mode.grid(row=0, column=1, sticky="ew", pady=5, padx=(0, 14))
-    _labeled_entry(panel, 0, 2, "最大帧数", app.frame_keyframe_max_var, "60")
+    _labeled_entry(panel, 0, 2, "帧上限", app.frame_keyframe_max_var, "0")
     create_timecode_fields(panel, 1, 0, "开始时间", app.frame_start_var, columnspan=3)
     create_timecode_fields(panel, 2, 0, "结束时间", app.frame_end_var, allow_empty=True, empty_text="到结尾", columnspan=3)
     _labeled_entry(panel, 3, 0, "抽帧间隔秒", app.frame_interval_var, "10")

@@ -24,7 +24,7 @@
   "frame_sampler_cols": 5,
   "frame_sampler_rows": 6,
   "frame_sampler_thumb_width": 360,
-  "frame_sampler_keyframe_max_frames": 60,
+  "frame_sampler_keyframe_max_frames": 0,
   "frame_sampler_keyframe_time_dedupe_ms": 0,
   "frame_sampler_keyframe_distance_dedupe_px": 0,
   "frame_sampler_jpeg_quality": 85,

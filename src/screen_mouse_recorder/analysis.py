@@ -134,7 +134,7 @@ def _maybe_generate_click_keyframes(
                 video_path=storage.recording_mp4,
                 events_path=storage.mouse_events,
                 output_dir=output_dir,
-                max_frames=60,
+                max_frames=0,
                 sheet_cols=5,
                 sheet_rows=6,
                 thumb_width=320,
