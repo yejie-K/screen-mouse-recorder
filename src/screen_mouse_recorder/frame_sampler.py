@@ -11,7 +11,7 @@ import re
 import shutil
 import subprocess
 import time
-from typing import Callable
+from typing import Any, Callable
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -49,6 +49,47 @@ class ClickMarker:
 
 
 @dataclass(slots=True)
+class ClickKeyframeEvent:
+    source_index: int
+    seconds: float
+    event_type: str
+    event_id: str
+    x: float | None
+    y: float | None
+
+
+@dataclass(slots=True)
+class ClickKeyframeConfig:
+    video_path: Path
+    events_path: Path
+    output_dir: Path
+    max_frames: int = 60
+    sheet_cols: int = 5
+    sheet_rows: int = 6
+    thumb_width: int = 360
+    time_dedupe_seconds: float = 0.5
+    distance_dedupe_px: float = 20.0
+    include_double_clicks: bool = False
+    include_drag_events: bool = False
+    frame_offset_seconds: float = 0.0
+    show_timestamp: bool = True
+    show_index: bool = True
+    draw_click_markers: bool = True
+    output_basename: str = "click_keyframes"
+
+
+@dataclass(slots=True)
+class ClickKeyframeResult:
+    output_dir: Path
+    sheet_paths: list[Path]
+    index_json: Path
+    events_total: int
+    events_kept: int
+    events_skipped: int
+    warnings: list[str]
+
+
+@dataclass(slots=True)
 class FrameSamplerConfig:
     video_path: Path
     output_dir: Path
@@ -81,6 +122,11 @@ class FramePlanEntry:
     sheet_index: int
     sheet_row: int
     sheet_col: int
+    event_type: str = ""
+    event_id: str = ""
+    source_index: int = 0
+    click_x: float | None = None
+    click_y: float | None = None
 
 
 @dataclass(slots=True)
@@ -379,6 +425,158 @@ def sample_video_to_sheets(
     return FrameSamplerResult(output_dir, sheets_dir, sheet_paths, index_csv, report_html, config_json, estimate)
 
 
+def load_click_keyframe_events(config: ClickKeyframeConfig) -> list[ClickKeyframeEvent]:
+    if not config.events_path.exists():
+        return []
+    accepted = {"click"}
+    if config.include_double_clicks:
+        accepted.add("double_click_candidate")
+    if config.include_drag_events:
+        accepted.update({"drag_start", "drag_end"})
+
+    events: list[ClickKeyframeEvent] = []
+    with config.events_path.open("r", encoding="utf-8-sig") as handle:
+        for source_index, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            event_type = str(row.get("event_type", ""))
+            if event_type not in accepted:
+                continue
+            seconds = _row_video_seconds(row)
+            if seconds is None:
+                continue
+            x = _safe_float(row.get("video_x"))
+            y = _safe_float(row.get("video_y"))
+            event_id = str(row.get("event_id") or f"row_{source_index:06d}")
+            events.append(ClickKeyframeEvent(source_index, seconds, event_type, event_id, x, y))
+    events.sort(key=lambda event: (event.seconds, event.source_index))
+    return events
+
+
+def select_click_keyframes(events: list[ClickKeyframeEvent], config: ClickKeyframeConfig) -> tuple[list[ClickKeyframeEvent], int]:
+    selected: list[ClickKeyframeEvent] = []
+    skipped = 0
+    max_frames = max(1, int(config.max_frames))
+    time_threshold = max(0.0, float(config.time_dedupe_seconds))
+    distance_threshold = max(0.0, float(config.distance_dedupe_px))
+
+    for event in events:
+        if selected and _is_near_duplicate_click(selected[-1], event, time_threshold, distance_threshold):
+            skipped += 1
+            continue
+        if len(selected) >= max_frames:
+            skipped += 1
+            continue
+        selected.append(event)
+    return selected, skipped
+
+
+def build_click_keyframe_plan(
+    events: list[ClickKeyframeEvent],
+    config: ClickKeyframeConfig,
+    video_info: VideoInfo,
+) -> list[FramePlanEntry]:
+    cols = max(1, int(config.sheet_cols))
+    rows = max(1, int(config.sheet_rows))
+    per_sheet = cols * rows
+    offset = max(0.0, float(config.frame_offset_seconds))
+    plan: list[FramePlanEntry] = []
+    for index, event in enumerate(events, start=1):
+        seconds = min(video_info.duration_seconds, max(0.0, event.seconds + offset))
+        zero_index = index - 1
+        sheet_zero = zero_index // per_sheet
+        position = zero_index % per_sheet
+        plan.append(
+            FramePlanEntry(
+                index=index,
+                seconds=round(seconds, 3),
+                timestamp=format_timecode(seconds),
+                is_dense=True,
+                sheet_index=sheet_zero + 1,
+                sheet_row=position // cols + 1,
+                sheet_col=position % cols + 1,
+                event_type=event.event_type,
+                event_id=event.event_id,
+                source_index=event.source_index,
+                click_x=event.x,
+                click_y=event.y,
+            )
+        )
+    return plan
+
+
+def generate_click_keyframe_sheets(
+    config: ClickKeyframeConfig,
+    ffmpeg_path: str | None = None,
+    progress: ProgressCallback | None = None,
+) -> ClickKeyframeResult:
+    video_info = probe_video(config.video_path, ffmpeg_path)
+    ffmpeg = resolve_ffmpeg(ffmpeg_path)
+    output_dir = config.output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    warnings: list[str] = []
+    _cleanup_click_keyframe_outputs(output_dir, config.output_basename)
+
+    events = load_click_keyframe_events(config)
+    selected, skipped = select_click_keyframes(events, config)
+    if not selected:
+        index_json = output_dir / f"{config.output_basename}_index.json"
+        _write_click_keyframe_index_json(index_json, [], [], events_total=len(events), events_skipped=skipped, warnings=["无点击事件"])
+        return ClickKeyframeResult(output_dir, [], index_json, len(events), 0, skipped, ["无点击事件"])
+
+    valid_events: list[ClickKeyframeEvent] = []
+    for event in selected:
+        if event.seconds > video_info.duration_seconds + 0.25:
+            skipped += 1
+            warnings.append(f"跳过超出视频时长的事件 {event.event_id}：{format_timecode(event.seconds)}")
+            continue
+        valid_events.append(event)
+    plan = build_click_keyframe_plan(valid_events, config, video_info)
+    if not plan:
+        index_json = output_dir / f"{config.output_basename}_index.json"
+        _write_click_keyframe_index_json(index_json, [], [], len(events), skipped, warnings)
+        return ClickKeyframeResult(output_dir, [], index_json, len(events), 0, skipped, warnings)
+
+    sheet_paths: list[Path] = []
+    frames_per_sheet = max(1, int(config.sheet_cols) * int(config.sheet_rows))
+    total = len(plan)
+    for sheet_offset in range(0, total, frames_per_sheet):
+        sheet_entries = plan[sheet_offset : sheet_offset + frames_per_sheet]
+        thumbs: list[Image.Image] = []
+        for entry in sheet_entries:
+            if progress:
+                progress(entry.index, total, f"关键帧 {entry.timestamp}")
+            image = _extract_frame(ffmpeg, config.video_path, entry.seconds)
+            marker = None
+            if config.draw_click_markers and entry.click_x is not None and entry.click_y is not None:
+                marker = ClickMarker(entry.seconds, entry.click_x, entry.click_y)
+            image, click_position = _prepare_frame_image(image, None, config.thumb_width, marker)
+            _draw_overlay(image, entry, _frame_overlay_config(config))
+            _draw_click_marker(image, click_position)
+            thumbs.append(image)
+        sheet_image = _compose_sheet(thumbs, sheet_entries, _frame_overlay_config(config))
+        if len(plan) <= frames_per_sheet:
+            sheet_path = output_dir / f"{config.output_basename}.png"
+        else:
+            sheet_path = output_dir / f"{config.output_basename}_{sheet_entries[0].sheet_index:03d}.png"
+        sheet_image.save(sheet_path, "PNG", optimize=True)
+        sheet_paths.append(sheet_path)
+        for thumb in thumbs:
+            thumb.close()
+        sheet_image.close()
+
+    index_json = output_dir / f"{config.output_basename}_index.json"
+    _write_click_keyframe_index_json(index_json, plan, sheet_paths, len(events), skipped, warnings)
+    if progress:
+        progress(total, total, "完成")
+    return ClickKeyframeResult(output_dir, sheet_paths, index_json, len(events), len(plan), skipped, warnings)
+
+
 def extract_preview_frame(video_path: Path, ffmpeg_path: str | None = None, seconds: float = 0.0) -> Image.Image:
     ffmpeg = resolve_ffmpeg(ffmpeg_path)
     return _extract_frame(ffmpeg, video_path, seconds)
@@ -410,6 +608,88 @@ def load_click_markers(path: Path | None) -> list[ClickMarker]:
             markers.append(ClickMarker(seconds=t_video_ms / 1000, x=x, y=y))
     markers.sort(key=lambda marker: marker.seconds)
     return markers
+
+
+def _row_video_seconds(row: dict[str, Any]) -> float | None:
+    t_video_ms = _safe_float(row.get("t_video_ms"))
+    if t_video_ms is not None:
+        return max(0.0, t_video_ms / 1000)
+    timecode = row.get("video_timecode")
+    if timecode is not None:
+        try:
+            return parse_timecode(str(timecode))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _is_near_duplicate_click(
+    previous: ClickKeyframeEvent,
+    current: ClickKeyframeEvent,
+    time_threshold: float,
+    distance_threshold: float,
+) -> bool:
+    if current.seconds - previous.seconds > time_threshold:
+        return False
+    if previous.x is None or previous.y is None or current.x is None or current.y is None:
+        return False
+    distance = ((current.x - previous.x) ** 2 + (current.y - previous.y) ** 2) ** 0.5
+    return distance <= distance_threshold
+
+
+def _frame_overlay_config(config: ClickKeyframeConfig) -> FrameSamplerConfig:
+    return FrameSamplerConfig(
+        video_path=config.video_path,
+        output_dir=config.output_dir,
+        sheet_cols=config.sheet_cols,
+        sheet_rows=config.sheet_rows,
+        thumb_width=config.thumb_width,
+        output_format="png",
+        show_timestamp=config.show_timestamp,
+        show_index=config.show_index,
+    )
+
+
+def _cleanup_click_keyframe_outputs(output_dir: Path, basename: str) -> None:
+    for path in output_dir.glob(f"{basename}*.png"):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _write_click_keyframe_index_json(
+    path: Path,
+    plan: list[FramePlanEntry],
+    sheet_paths: list[Path],
+    events_total: int,
+    events_skipped: int,
+    warnings: list[str],
+) -> None:
+    sheet_by_index = {index + 1: sheet_path.name for index, sheet_path in enumerate(sheet_paths)}
+    payload = {
+        "events_total": events_total,
+        "events_kept": len(plan),
+        "events_skipped": events_skipped,
+        "warnings": warnings,
+        "frames": [
+            {
+                "index": entry.index,
+                "event_id": entry.event_id,
+                "event_type": entry.event_type,
+                "source_index": entry.source_index,
+                "seconds": entry.seconds,
+                "timestamp": entry.timestamp,
+                "video_x": entry.click_x,
+                "video_y": entry.click_y,
+                "sheet": sheet_by_index.get(entry.sheet_index, ""),
+                "sheet_row": entry.sheet_row,
+                "sheet_col": entry.sheet_col,
+            }
+            for entry in plan
+        ],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
 def _parse_fps(value: str) -> float:

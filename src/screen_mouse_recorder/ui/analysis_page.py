@@ -82,6 +82,7 @@ def build_analysis_page(app: Any, parent: tk.Widget) -> None:
     output_list.columnconfigure(1, weight=1)
     output_items = [
         ("report", "中文分析报告", "mouse_behavior_report.xlsx"),
+        ("click_keyframes", "点击关键帧合成图", "click_keyframes.png"),
         ("heatmap_circle", "圆圈热力图", "click_heatmap_circle.png"),
         ("timeline", "每分钟事件节奏", "activity_timeline.png"),
         ("scatter", "点击位置分布", "click_scatter.png"),

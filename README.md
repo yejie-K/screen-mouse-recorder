@@ -72,6 +72,10 @@ Frame sampling creates a folder under `frame_sheets/` by default:
 - `report.html`
 - `config.json`
 
+The `抽帧拼图` tab can also generate click-driven keyframe sheets. Choose `点击关键帧`
+as the mode, select a session video, and the tool will use `mouse_events.jsonl`
+from the same session to create `analysis_output/click_keyframes.png`.
+
 ## Notes
 
 - The app records only mouse activity and selected screen pixels. It does not record keyboard input or audio.

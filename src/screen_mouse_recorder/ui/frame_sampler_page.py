@@ -117,14 +117,26 @@ def _build_basic_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
     panel.columnconfigure(1, weight=1, minsize=132)
     panel.columnconfigure(2, weight=0, minsize=76)
     panel.columnconfigure(3, weight=1, minsize=132)
-    create_timecode_fields(panel, 0, 0, "开始时间", app.frame_start_var, columnspan=3)
-    create_timecode_fields(panel, 1, 0, "结束时间", app.frame_end_var, allow_empty=True, empty_text="到结尾", columnspan=3)
-    _labeled_entry(panel, 2, 0, "抽帧间隔秒", app.frame_interval_var, "10")
-    _labeled_entry(panel, 2, 2, "单帧宽度", app.frame_thumb_width_var, "360")
-    _labeled_entry(panel, 3, 0, "拼图列数", app.frame_cols_var, "5")
-    _labeled_entry(panel, 3, 2, "拼图行数", app.frame_rows_var, "6")
+    ttk.Label(panel, text="合成模式", style="Panel.TLabel").grid(row=0, column=0, sticky="w", pady=5, padx=(0, 8))
+    mode = ttk.Combobox(
+        panel,
+        textvariable=app.frame_mode_var,
+        values=("均匀抽帧", "点击关键帧"),
+        state="readonly",
+        width=10,
+    )
+    mode.grid(row=0, column=1, sticky="ew", pady=5, padx=(0, 14))
+    _labeled_entry(panel, 0, 2, "最大帧数", app.frame_keyframe_max_var, "60")
+    create_timecode_fields(panel, 1, 0, "开始时间", app.frame_start_var, columnspan=3)
+    create_timecode_fields(panel, 2, 0, "结束时间", app.frame_end_var, allow_empty=True, empty_text="到结尾", columnspan=3)
+    _labeled_entry(panel, 3, 0, "抽帧间隔秒", app.frame_interval_var, "10")
+    _labeled_entry(panel, 3, 2, "单帧宽度", app.frame_thumb_width_var, "360")
+    _labeled_entry(panel, 4, 0, "拼图列数", app.frame_cols_var, "5")
+    _labeled_entry(panel, 4, 2, "拼图行数", app.frame_rows_var, "6")
+    _labeled_entry(panel, 5, 0, "时间去重 ms", app.frame_keyframe_time_dedupe_var, "500")
+    _labeled_entry(panel, 5, 2, "距离去重 px", app.frame_keyframe_distance_dedupe_var, "20")
 
-    ttk.Label(panel, text="导出质量", style="Panel.TLabel").grid(row=4, column=0, sticky="w", pady=5, padx=(0, 8))
+    ttk.Label(panel, text="导出质量", style="Panel.TLabel").grid(row=6, column=0, sticky="w", pady=5, padx=(0, 8))
     quality = ttk.Combobox(
         panel,
         textvariable=app.frame_quality_preset_var,
@@ -132,7 +144,7 @@ def _build_basic_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
         state="readonly",
         width=8,
     )
-    quality.grid(row=4, column=1, sticky="ew", pady=5, padx=(0, 14))
+    quality.grid(row=6, column=1, sticky="ew", pady=5, padx=(0, 14))
     tk.Label(
         panel,
         text="JPG / PNG",
@@ -140,16 +152,16 @@ def _build_basic_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
         fg=COLORS["muted"],
         anchor="w",
         font=FONT_SMALL,
-    ).grid(row=4, column=2, columnspan=2, sticky="ew", pady=5)
+    ).grid(row=6, column=2, columnspan=2, sticky="ew", pady=5)
 
     flags = ttk.Frame(panel, style="Panel.TFrame")
-    flags.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+    flags.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(8, 0))
     for column in range(3):
         flags.columnconfigure(column, weight=1)
     _check(flags, 0, "显示时间戳", app.frame_show_timestamp_var)
     _check(flags, 1, "显示序号", app.frame_show_index_var)
     _check(flags, 2, "叠加鼠标点击点", app.frame_draw_click_markers_var)
-    _build_dense_section(app, panel, 6)
+    _build_dense_section(app, panel, 8)
     return panel
 
 

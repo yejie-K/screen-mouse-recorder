@@ -20,6 +20,7 @@ from screen_mouse_recorder.analysis import generate_behavior_report
 from screen_mouse_recorder.calibration import build_calibration_result
 from screen_mouse_recorder.config import AppConfig
 from screen_mouse_recorder.frame_sampler import (
+    ClickKeyframeConfig,
     ClickMarker,
     CropRegion,
     DenseRange,
@@ -27,12 +28,15 @@ from screen_mouse_recorder.frame_sampler import (
     VideoInfo,
     _nearest_click_marker,
     _prepare_frame_image,
+    build_click_keyframe_plan,
     build_frame_plan,
     default_output_dir,
     estimate_sampling,
     format_timecode,
+    load_click_keyframe_events,
     load_click_markers,
     parse_timecode,
+    select_click_keyframes,
 )
 from PIL import Image
 from screen_mouse_recorder.models import Region, TimingContext
@@ -88,6 +92,9 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(config.frame_sampler_cols, 5)
         self.assertEqual(config.frame_sampler_rows, 6)
         self.assertTrue(config.frame_sampler_show_timestamp)
+        self.assertEqual(config.frame_sampler_mode, "interval")
+        self.assertEqual(config.frame_sampler_keyframe_max_frames, 60)
+        self.assertTrue(config.frame_sampler_draw_click_markers)
 
     def test_frame_sampler_timecode_helpers(self) -> None:
         self.assertEqual(parse_timecode("01:02:03"), 3723)
@@ -226,6 +233,78 @@ class CoreSmokeTests(unittest.TestCase):
 
         self.assertEqual(thumb.size, (200, 200))
         self.assertEqual(position, (50, 50))
+
+    def test_click_keyframes_load_and_dedupe_click_events(self) -> None:
+        with TemporaryDirectory() as directory:
+            events_path = Path(directory) / "mouse_events.jsonl"
+            events_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event_id": "a", "event_type": "click", "t_video_ms": 1000, "video_x": 10, "video_y": 10}),
+                        json.dumps({"event_id": "b", "event_type": "click", "t_video_ms": 1200, "video_x": 18, "video_y": 14}),
+                        json.dumps({"event_id": "c", "event_type": "click", "t_video_ms": 1800, "video_x": 18, "video_y": 14}),
+                        json.dumps(
+                            {
+                                "event_id": "d",
+                                "event_type": "double_click_candidate",
+                                "t_video_ms": 1900,
+                                "video_x": 18,
+                                "video_y": 14,
+                            }
+                        ),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = ClickKeyframeConfig(
+                video_path=Path("recording.mp4"),
+                events_path=events_path,
+                output_dir=Path(directory),
+                time_dedupe_seconds=0.5,
+                distance_dedupe_px=20,
+            )
+
+            events = load_click_keyframe_events(config)
+            selected, skipped = select_click_keyframes(events, config)
+
+        self.assertEqual([event.event_id for event in events], ["a", "b", "c"])
+        self.assertEqual([event.event_id for event in selected], ["a", "c"])
+        self.assertEqual(skipped, 1)
+
+    def test_click_keyframes_can_include_double_click_and_paginate_plan(self) -> None:
+        with TemporaryDirectory() as directory:
+            events_path = Path(directory) / "mouse_events.jsonl"
+            events_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event_id": "a", "event_type": "click", "t_video_ms": 1000, "video_x": 10, "video_y": 10}),
+                        json.dumps(
+                            {
+                                "event_id": "b",
+                                "event_type": "double_click_candidate",
+                                "video_timecode": "00:00:02.000",
+                                "video_x": 80,
+                                "video_y": 40,
+                            }
+                        ),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = ClickKeyframeConfig(
+                video_path=Path("recording.mp4"),
+                events_path=events_path,
+                output_dir=Path(directory),
+                include_double_clicks=True,
+                sheet_cols=1,
+                sheet_rows=1,
+            )
+            video = VideoInfo(Path("recording.mp4"), duration_seconds=5, width=100, height=100, fps=30, file_size_bytes=100)
+            plan = build_click_keyframe_plan(load_click_keyframe_events(config), config, video)
+
+        self.assertEqual([entry.event_id for entry in plan], ["a", "b"])
+        self.assertEqual([entry.sheet_index for entry in plan], [1, 2])
+        self.assertEqual(plan[1].timestamp, "00:00:02")
 
     def test_video_recorder_draws_mouse_cursor(self) -> None:
         region = Region(screen_x=10, screen_y=20, width=320, height=240)
@@ -419,6 +498,7 @@ class CoreSmokeTests(unittest.TestCase):
             self.assertEqual(result.output_dir, (storage.session_dir / "analysis_output").resolve())
             self.assertEqual(result.metrics["clicks_total"], 2)
             self.assertTrue(zipfile.is_zipfile(result.outputs["report"]))
+            self.assertEqual(result.outputs["click_keyframes"].name, "click_keyframes.png")
             self.assertTrue(result.outputs["heatmap_circle"].exists())
             self.assertFalse((result.output_dir / "click_heatmap_true_ratio.png").exists())
             self.assertFalse((result.output_dir / "click_heatmap_square_matrix.png").exists())

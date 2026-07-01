@@ -13,6 +13,7 @@ from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.styles import Alignment, Font, PatternFill
 from PIL import Image, ImageDraw, ImageFont
 
+from .frame_sampler import ClickKeyframeConfig, generate_click_keyframe_sheets
 from .postprocess import iter_jsonl, row_inside_video_region
 from .storage import SessionStorage
 
@@ -61,7 +62,11 @@ def describe_analysis_source(source_path: Path) -> dict[str, Any]:
     }
 
 
-def generate_behavior_report(source_path: Path, output_dir: Path | None = None) -> BehaviorAnalysisResult:
+def generate_behavior_report(
+    source_path: Path,
+    output_dir: Path | None = None,
+    ffmpeg_path: str | None = None,
+) -> BehaviorAnalysisResult:
     source_path = source_path.resolve()
     output_dir = (output_dir or default_analysis_output_dir(source_path)).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -80,6 +85,7 @@ def generate_behavior_report(source_path: Path, output_dir: Path | None = None) 
         "heatmap_circle": output_dir / "click_heatmap_circle.png",
         "scatter": output_dir / "click_scatter.png",
         "drag_durations": output_dir / "drag_durations.png",
+        "click_keyframes": output_dir / "click_keyframes.png",
     }
 
     _cleanup_legacy_heatmap_outputs(output_dir)
@@ -93,6 +99,7 @@ def generate_behavior_report(source_path: Path, output_dir: Path | None = None) 
     _draw_click_scatter(outputs["scatter"], analysis)
     _draw_drag_durations(outputs["drag_durations"], analysis)
     _write_behavior_workbook(outputs["report"], analysis)
+    _maybe_generate_click_keyframes(source_path, output_dir, warnings, ffmpeg_path)
 
     return BehaviorAnalysisResult(
         source_path=source_path,
@@ -109,6 +116,45 @@ def _cleanup_legacy_heatmap_outputs(output_dir: Path) -> None:
             (output_dir / filename).unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def _maybe_generate_click_keyframes(
+    source_path: Path,
+    output_dir: Path,
+    warnings: list[str],
+    ffmpeg_path: str | None,
+) -> None:
+    session_dir = source_path if source_path.is_dir() else source_path.parent
+    storage = SessionStorage(session_dir)
+    if not storage.recording_mp4.exists() or not storage.mouse_events.exists():
+        return
+    try:
+        result = generate_click_keyframe_sheets(
+            ClickKeyframeConfig(
+                video_path=storage.recording_mp4,
+                events_path=storage.mouse_events,
+                output_dir=output_dir,
+                max_frames=60,
+                sheet_cols=5,
+                sheet_rows=6,
+                thumb_width=320,
+                time_dedupe_seconds=0.5,
+                distance_dedupe_px=20.0,
+                include_double_clicks=False,
+                include_drag_events=False,
+                show_timestamp=True,
+                show_index=True,
+                draw_click_markers=True,
+            ),
+            ffmpeg_path=ffmpeg_path,
+        )
+    except Exception as exc:
+        warnings.append(f"点击关键帧图生成失败：{exc}")
+        return
+    if not result.sheet_paths:
+        warnings.append("点击关键帧图未生成：无点击事件。")
+    elif result.warnings:
+        warnings.extend(f"点击关键帧图：{warning}" for warning in result.warnings)
 
 
 def _load_source_rows(source_path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], list[str]]:

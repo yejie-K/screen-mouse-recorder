@@ -16,6 +16,7 @@ from . import __version__
 from .analysis import default_analysis_output_dir, describe_analysis_source, generate_behavior_report
 from .config import AppConfig
 from .frame_sampler import (
+    ClickKeyframeConfig,
     CropRegion,
     DenseRange,
     FrameSamplerConfig,
@@ -24,9 +25,12 @@ from .frame_sampler import (
     estimate_sampling,
     extract_preview_frame,
     format_timecode,
+    generate_click_keyframe_sheets,
+    load_click_keyframe_events,
     parse_timecode,
     probe_video,
     sample_video_to_sheets,
+    select_click_keyframes,
 )
 from .models import Region, TimingContext, monotonic_ms, wall_time_iso
 from .mouse_logger import MouseActivityLogger
@@ -117,12 +121,18 @@ class ScreenMouseRecorderApp:
         self.frame_eta_var = tk.StringVar(value="--")
         self.frame_status_var = tk.StringVar(value="选择视频后可预估抽帧数量和合成图数量。")
         self.frame_progress_var = tk.StringVar(value="")
+        self.frame_mode_var = tk.StringVar(
+            value="点击关键帧" if self.config.frame_sampler_mode == "click_keyframes" else "均匀抽帧"
+        )
         self.frame_start_var = tk.StringVar(value=self.config.frame_sampler_start)
         self.frame_end_var = tk.StringVar(value=self.config.frame_sampler_end)
         self.frame_interval_var = tk.StringVar(value=str(self.config.frame_sampler_interval_seconds).rstrip("0").rstrip("."))
         self.frame_cols_var = tk.StringVar(value=str(self.config.frame_sampler_cols))
         self.frame_rows_var = tk.StringVar(value=str(self.config.frame_sampler_rows))
         self.frame_thumb_width_var = tk.StringVar(value=str(self.config.frame_sampler_thumb_width))
+        self.frame_keyframe_max_var = tk.StringVar(value=str(self.config.frame_sampler_keyframe_max_frames))
+        self.frame_keyframe_time_dedupe_var = tk.StringVar(value=str(self.config.frame_sampler_keyframe_time_dedupe_ms))
+        self.frame_keyframe_distance_dedupe_var = tk.StringVar(value=str(self.config.frame_sampler_keyframe_distance_dedupe_px))
         self.frame_quality_var = tk.StringVar(value=str(self.config.frame_sampler_jpeg_quality))
         self.frame_quality_preset_var = tk.StringVar(value=self._frame_quality_preset_from_config())
         self.frame_dense_start_var = tk.StringVar(value=self.config.frame_sampler_dense_start)
@@ -404,12 +414,16 @@ class ScreenMouseRecorderApp:
             self.calibration_tolerance_var,
             self.startup_countdown_var,
             self.session_name_var,
+            self.frame_mode_var,
             self.frame_start_var,
             self.frame_end_var,
             self.frame_interval_var,
             self.frame_cols_var,
             self.frame_rows_var,
             self.frame_thumb_width_var,
+            self.frame_keyframe_max_var,
+            self.frame_keyframe_time_dedupe_var,
+            self.frame_keyframe_distance_dedupe_var,
             self.frame_quality_var,
             self.frame_quality_preset_var,
             self.frame_show_timestamp_var,
@@ -427,6 +441,7 @@ class ScreenMouseRecorderApp:
         ]
         for variable in vars_to_track:
             variable.trace_add("write", lambda *_args: self._on_config_changed())
+        self.frame_mode_var.trace_add("write", lambda *_args: self._refresh_frame_default_output_dir(force=True))
         self.frame_start_var.trace_add("write", lambda *_args: self._on_frame_time_range_changed())
         self.frame_end_var.trace_add("write", lambda *_args: self._on_frame_time_range_changed())
 
@@ -1181,7 +1196,7 @@ class ScreenMouseRecorderApp:
             result = None
             error: Exception | None = None
             try:
-                result = generate_behavior_report(source_path, output_dir)
+                result = generate_behavior_report(source_path, output_dir, self.config.ffmpeg_path)
             except Exception as exc:
                 error = exc
             self.root.after(0, lambda: self._on_import_analysis_done(result, error))
@@ -1224,6 +1239,7 @@ class ScreenMouseRecorderApp:
             return
         files = {
             "report": "mouse_behavior_report.xlsx",
+            "click_keyframes": "click_keyframes.png",
             "heatmap_circle": "click_heatmap_circle.png",
             "timeline": "activity_timeline.png",
             "scatter": "click_scatter.png",
@@ -1346,8 +1362,11 @@ class ScreenMouseRecorderApp:
             if current_path != self.frame_default_output_dir.resolve():
                 self.frame_output_is_default = False
                 return
-        start, end = self._frame_output_range_seconds()
-        output_dir = default_output_dir(video_path, video_path.parent, start_seconds=start, end_seconds=end)
+        if self._frame_is_click_keyframe_mode():
+            output_dir = video_path.parent / "analysis_output"
+        else:
+            start, end = self._frame_output_range_seconds()
+            output_dir = default_output_dir(video_path, video_path.parent, start_seconds=start, end_seconds=end)
         self.frame_default_output_dir = output_dir
         self.frame_output_dir = output_dir
         self.frame_output_is_default = True
@@ -1365,6 +1384,9 @@ class ScreenMouseRecorderApp:
         if end is None and self.frame_video_info is not None:
             end = self.frame_video_info.duration_seconds
         return start, end
+
+    def _frame_is_click_keyframe_mode(self) -> bool:
+        return self.frame_mode_var.get().strip() == "点击关键帧"
 
     def _guess_frame_click_events_path(self, video_path: Path) -> Path | None:
         candidates = [
@@ -1657,9 +1679,26 @@ class ScreenMouseRecorderApp:
 
     def estimate_frame_sampling(self, show_message: bool = True) -> None:
         try:
-            config = self._build_frame_sampler_config()
-            info = self.frame_video_info or probe_video(config.video_path, self.config.ffmpeg_path)
+            info = self.frame_video_info or probe_video(self._frame_video_path(), self.config.ffmpeg_path)
             self.frame_video_info = info
+            if self._frame_is_click_keyframe_mode():
+                config = self._build_click_keyframe_config()
+                events = load_click_keyframe_events(config)
+                selected, skipped = select_click_keyframes(events, config)
+                per_sheet = max(1, config.sheet_cols * config.sheet_rows)
+                sheet_count = (len(selected) + per_sheet - 1) // per_sheet if selected else 0
+                self.frame_duration_var.set(format_timecode(info.duration_seconds))
+                self.frame_resolution_var.set(f"{info.width}x{info.height}")
+                self.frame_count_var.set(str(len(selected)))
+                self.frame_sheet_count_var.set(str(sheet_count))
+                self.frame_eta_var.set(f"约 {max(1, len(selected)) * 0.3:.0f} 秒")
+                self.frame_status_var.set(
+                    f"识别点击事件 {len(events)} 个，去重后保留 {len(selected)} 张；跳过 {skipped} 个。"
+                )
+                self._sync_frame_config_from_ui()
+                self._save_config()
+                return
+            config = self._build_frame_sampler_config()
             estimate = estimate_sampling(config, info)
         except Exception as exc:
             self.frame_status_var.set(f"预估失败：{exc}")
@@ -1684,17 +1723,33 @@ class ScreenMouseRecorderApp:
         try:
             if self.frame_output_is_default:
                 self._refresh_frame_default_output_dir(force=True)
-            config = self._build_frame_sampler_config()
-            info = self.frame_video_info or probe_video(config.video_path, self.config.ffmpeg_path)
-            estimate = estimate_sampling(config, info)
+            info = self.frame_video_info or probe_video(self._frame_video_path(), self.config.ffmpeg_path)
+            if self._frame_is_click_keyframe_mode():
+                click_config = self._build_click_keyframe_config()
+                events = load_click_keyframe_events(click_config)
+                selected, _skipped = select_click_keyframes(events, click_config)
+                per_sheet = max(1, click_config.sheet_cols * click_config.sheet_rows)
+                sheet_count = (len(selected) + per_sheet - 1) // per_sheet if selected else 0
+                config = click_config
+                estimate = None
+            else:
+                config = self._build_frame_sampler_config()
+                estimate = estimate_sampling(config, info)
+                selected = []
+                sheet_count = estimate.sheet_count
         except Exception as exc:
             messagebox.showerror("无法开始", str(exc))
             return
         self.frame_video_info = info
         self._set_frame_running(True)
-        self.frame_count_var.set(str(estimate.frame_count))
-        self.frame_sheet_count_var.set(str(estimate.sheet_count))
-        self.frame_eta_var.set(f"约 {estimate.estimated_processing_seconds:.0f} 秒")
+        if estimate is not None:
+            self.frame_count_var.set(str(estimate.frame_count))
+            self.frame_sheet_count_var.set(str(estimate.sheet_count))
+            self.frame_eta_var.set(f"约 {estimate.estimated_processing_seconds:.0f} 秒")
+        else:
+            self.frame_count_var.set(str(len(selected)))
+            self.frame_sheet_count_var.set(str(sheet_count))
+            self.frame_eta_var.set(f"约 {max(1, len(selected)) * 0.3:.0f} 秒")
 
         def progress(done: int, total: int, message: str) -> None:
             self.root.after(0, lambda: self._update_frame_progress(done, total, message))
@@ -1703,7 +1758,10 @@ class ScreenMouseRecorderApp:
             result = None
             error: Exception | None = None
             try:
-                result = sample_video_to_sheets(config, self.config.ffmpeg_path, progress)
+                if isinstance(config, ClickKeyframeConfig):
+                    result = generate_click_keyframe_sheets(config, self.config.ffmpeg_path, progress)
+                else:
+                    result = sample_video_to_sheets(config, self.config.ffmpeg_path, progress)
             except Exception as exc:
                 error = exc
             self.root.after(0, lambda: self._on_frame_sampling_done(result, error))
@@ -1738,9 +1796,15 @@ class ScreenMouseRecorderApp:
         self.frame_default_output_dir = result.output_dir
         self.frame_output_is_default = True
         self.frame_open_button.configure(state="normal")
-        self.frame_status_var.set(
-            f"已生成 {len(result.sheet_paths)} 张合成图，索引和预览页已写入输出目录。"
-        )
+        if hasattr(result, "index_json") and not hasattr(result, "report_html"):
+            if result.sheet_paths:
+                self.frame_status_var.set(f"已生成 {len(result.sheet_paths)} 张点击关键帧图，索引已写入输出目录。")
+            else:
+                self.frame_status_var.set("无点击事件，未生成点击关键帧图。")
+        else:
+            self.frame_status_var.set(
+                f"已生成 {len(result.sheet_paths)} 张合成图，索引和预览页已写入输出目录。"
+            )
         self.frame_progress_var.set("完成")
 
     def open_frame_output(self) -> None:
@@ -1751,7 +1815,7 @@ class ScreenMouseRecorderApp:
         path.mkdir(parents=True, exist_ok=True)
         os.startfile(path)
 
-    def _build_frame_sampler_config(self) -> FrameSamplerConfig:
+    def _frame_video_path(self) -> Path:
         if self.frame_source_path is None:
             raw_path = self.frame_video_var.get().strip()
             if not raw_path or raw_path == "未选择":
@@ -1760,6 +1824,10 @@ class ScreenMouseRecorderApp:
         video_path = self.frame_source_path.resolve()
         if not video_path.exists():
             raise FileNotFoundError(video_path)
+        return video_path
+
+    def _build_frame_sampler_config(self) -> FrameSamplerConfig:
+        video_path = self._frame_video_path()
 
         output_dir = Path(self.frame_output_var.get().strip() or "").resolve()
         if not str(output_dir):
@@ -1807,6 +1875,29 @@ class ScreenMouseRecorderApp:
             click_match_window_seconds=max(0.1, float(self.config.frame_sampler_click_match_window_seconds or 0.5)),
         )
 
+    def _build_click_keyframe_config(self) -> ClickKeyframeConfig:
+        video_path = self._frame_video_path()
+        events_path = self.frame_click_events_path or self._guess_frame_click_events_path(video_path)
+        if events_path is None or not events_path.exists():
+            raise FileNotFoundError("未找到 mouse_events.jsonl，无法按点击生成关键帧。")
+        output_dir = Path(self.frame_output_var.get().strip() or "").resolve()
+        if not str(output_dir):
+            raise ValueError("请设置输出目录。")
+        return ClickKeyframeConfig(
+            video_path=video_path,
+            events_path=events_path.resolve(),
+            output_dir=output_dir,
+            max_frames=self._safe_int_string(self.frame_keyframe_max_var, 60, 1, 500),
+            sheet_cols=self._safe_int_string(self.frame_cols_var, 5, 1, 12),
+            sheet_rows=self._safe_int_string(self.frame_rows_var, 6, 1, 12),
+            thumb_width=self._safe_int_string(self.frame_thumb_width_var, 360, 120, 1600),
+            time_dedupe_seconds=self._safe_int_string(self.frame_keyframe_time_dedupe_var, 500, 0, 10000) / 1000,
+            distance_dedupe_px=self._safe_int_string(self.frame_keyframe_distance_dedupe_var, 20, 0, 1000),
+            show_timestamp=self.frame_show_timestamp_var.get(),
+            show_index=self.frame_show_index_var.get(),
+            draw_click_markers=self.frame_draw_click_markers_var.get(),
+        )
+
     def _frame_quality_settings(self) -> tuple[int, str]:
         preset = self.frame_quality_preset_var.get().strip()
         if preset == "低":
@@ -1850,12 +1941,20 @@ class ScreenMouseRecorderApp:
                 self.config.frame_sampler_output_root = output_text or "frame_sheets"
         except OSError:
             self.config.frame_sampler_output_root = "frame_sheets"
+        self.config.frame_sampler_mode = "click_keyframes" if self._frame_is_click_keyframe_mode() else "interval"
         self.config.frame_sampler_start = self.frame_start_var.get().strip()
         self.config.frame_sampler_end = self.frame_end_var.get().strip()
         self.config.frame_sampler_interval_seconds = self._safe_float_string(self.frame_interval_var, 10.0, 0.1, 3600.0)
         self.config.frame_sampler_cols = self._safe_int_string(self.frame_cols_var, 5, 1, 12)
         self.config.frame_sampler_rows = self._safe_int_string(self.frame_rows_var, 6, 1, 12)
         self.config.frame_sampler_thumb_width = self._safe_int_string(self.frame_thumb_width_var, 360, 120, 1600)
+        self.config.frame_sampler_keyframe_max_frames = self._safe_int_string(self.frame_keyframe_max_var, 60, 1, 500)
+        self.config.frame_sampler_keyframe_time_dedupe_ms = self._safe_int_string(
+            self.frame_keyframe_time_dedupe_var, 500, 0, 10000
+        )
+        self.config.frame_sampler_keyframe_distance_dedupe_px = self._safe_int_string(
+            self.frame_keyframe_distance_dedupe_var, 20, 0, 1000
+        )
         quality, _output_format = self._frame_quality_settings()
         self.config.frame_sampler_jpeg_quality = quality
         self.config.frame_sampler_quality_preset = self.frame_quality_preset_var.get().strip() or "高"
