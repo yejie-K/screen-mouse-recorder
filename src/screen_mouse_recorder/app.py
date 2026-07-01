@@ -135,6 +135,9 @@ class ScreenMouseRecorderApp:
         self.frame_keyframe_max_var = tk.StringVar(value=str(self.config.frame_sampler_keyframe_max_frames))
         self.frame_keyframe_time_dedupe_var = tk.StringVar(value=str(self.config.frame_sampler_keyframe_time_dedupe_ms))
         self.frame_keyframe_distance_dedupe_var = tk.StringVar(value=str(self.config.frame_sampler_keyframe_distance_dedupe_px))
+        self.frame_keyframe_visual_threshold_var = tk.StringVar(
+            value=str(getattr(self.config, "frame_sampler_keyframe_visual_threshold_percent", 12))
+        )
         self.frame_quality_var = tk.StringVar(value=str(self.config.frame_sampler_jpeg_quality))
         self.frame_quality_preset_var = tk.StringVar(value=self._frame_quality_preset_from_config())
         self.frame_dense_start_var = tk.StringVar(value=self.config.frame_sampler_dense_start)
@@ -1695,13 +1698,10 @@ class ScreenMouseRecorderApp:
                 self.frame_count_var.set(str(len(selected)))
                 self.frame_sheet_count_var.set(str(sheet_count))
                 self.frame_eta_var.set(f"约 {max(1, len(selected)) * 0.3:.0f} 秒")
-                limit_text = (
-                    "不设上限"
-                    if int(config.max_frames) <= 0
-                    else f"上限 {config.max_frames}，跳过 {skipped} 个"
-                )
                 self.frame_status_var.set(
-                    f"识别点击事件 {len(events)} 个，当前未去重，保留 {len(selected)} 张；{limit_text}。"
+                    f"识别点击事件 {len(events)} 个，实验去重预估保留 {len(selected)} 张；"
+                    f"聚簇 {config.time_dedupe_seconds:.1f}s / {config.distance_dedupe_px:.0f}px，"
+                    f"生成时复核画面差异。"
                 )
                 self._sync_frame_config_from_ui()
                 self._save_config()
@@ -1920,8 +1920,9 @@ class ScreenMouseRecorderApp:
             sheet_cols=self._safe_int_string(self.frame_cols_var, 5, 1, 12),
             sheet_rows=self._safe_int_string(self.frame_rows_var, 6, 1, 12),
             thumb_width=self._safe_int_string(self.frame_thumb_width_var, 360, 120, 1600),
-            time_dedupe_seconds=self._safe_int_string(self.frame_keyframe_time_dedupe_var, 0, 0, 10000) / 1000,
-            distance_dedupe_px=self._safe_int_string(self.frame_keyframe_distance_dedupe_var, 0, 0, 1000),
+            time_dedupe_seconds=self._safe_int_string(self.frame_keyframe_time_dedupe_var, 1500, 0, 10000) / 1000,
+            distance_dedupe_px=self._safe_int_string(self.frame_keyframe_distance_dedupe_var, 80, 0, 1000),
+            visual_change_threshold=self._safe_int_string(self.frame_keyframe_visual_threshold_var, 12, 0, 100) / 100,
             show_timestamp=self.frame_show_timestamp_var.get(),
             show_index=self.frame_show_index_var.get(),
             draw_click_markers=self.frame_draw_click_markers_var.get(),
@@ -1979,10 +1980,13 @@ class ScreenMouseRecorderApp:
         self.config.frame_sampler_thumb_width = self._safe_int_string(self.frame_thumb_width_var, 360, 120, 1600)
         self.config.frame_sampler_keyframe_max_frames = self._safe_int_string(self.frame_keyframe_max_var, 0, 0, 100000)
         self.config.frame_sampler_keyframe_time_dedupe_ms = self._safe_int_string(
-            self.frame_keyframe_time_dedupe_var, 0, 0, 10000
+            self.frame_keyframe_time_dedupe_var, 1500, 0, 10000
         )
         self.config.frame_sampler_keyframe_distance_dedupe_px = self._safe_int_string(
-            self.frame_keyframe_distance_dedupe_var, 0, 0, 1000
+            self.frame_keyframe_distance_dedupe_var, 80, 0, 1000
+        )
+        self.config.frame_sampler_keyframe_visual_threshold_percent = self._safe_int_string(
+            self.frame_keyframe_visual_threshold_var, 12, 0, 100
         )
         quality, _output_format = self._frame_quality_settings()
         self.config.frame_sampler_jpeg_quality = quality

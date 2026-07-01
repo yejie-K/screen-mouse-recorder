@@ -59,6 +59,23 @@ class ClickKeyframeEvent:
 
 
 @dataclass(slots=True)
+class ClickKeyframeSelection:
+    events: list[ClickKeyframeEvent]
+    skipped_count: int
+    reasons_by_event_id: dict[str, str] = field(default_factory=dict)
+    cluster_by_event_id: dict[str, int] = field(default_factory=dict)
+    cluster_size_by_event_id: dict[str, int] = field(default_factory=dict)
+    visual_diff_by_event_id: dict[str, float] = field(default_factory=dict)
+    stats: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ClickVisualSignature:
+    global_pixels: tuple[int, ...]
+    local_pixels: tuple[int, ...] | None = None
+
+
+@dataclass(slots=True)
 class ClickKeyframeConfig:
     video_path: Path
     events_path: Path
@@ -67,8 +84,11 @@ class ClickKeyframeConfig:
     sheet_cols: int = 5
     sheet_rows: int = 6
     thumb_width: int = 360
-    time_dedupe_seconds: float = 0.0
-    distance_dedupe_px: float = 0.0
+    time_dedupe_seconds: float = 1.5
+    distance_dedupe_px: float = 80.0
+    visual_change_threshold: float = 0.12
+    visual_sample_size: int = 48
+    visual_crop_radius_px: int = 140
     include_double_clicks: bool = False
     include_drag_events: bool = False
     frame_offset_seconds: float = 0.0
@@ -127,6 +147,10 @@ class FramePlanEntry:
     source_index: int = 0
     click_x: float | None = None
     click_y: float | None = None
+    selection_reason: str = ""
+    cluster_index: int = 0
+    cluster_size: int = 0
+    visual_diff: float | None = None
 
 
 @dataclass(slots=True)
@@ -467,28 +491,182 @@ def load_click_keyframe_events(config: ClickKeyframeConfig) -> list[ClickKeyfram
 
 
 def select_click_keyframes(events: list[ClickKeyframeEvent], config: ClickKeyframeConfig) -> tuple[list[ClickKeyframeEvent], int]:
-    selected: list[ClickKeyframeEvent] = []
-    skipped = 0
-    max_frames = max(0, int(config.max_frames))
+    selection = select_click_keyframes_with_stats(events, config)
+    return selection.events, selection.skipped_count
 
-    for event in events:
-        # 去重逻辑暂时关闭，方便对照原始点击数据检查抽帧结果。
-        # time_threshold = max(0.0, float(config.time_dedupe_seconds))
-        # distance_threshold = max(0.0, float(config.distance_dedupe_px))
-        # if selected and _is_near_duplicate_click(selected[-1], event, time_threshold, distance_threshold):
-        #     skipped += 1
-        #     continue
-        if max_frames and len(selected) >= max_frames:
-            skipped += 1
-            continue
-        selected.append(event)
-    return selected, skipped
+
+def select_click_keyframes_with_stats(
+    events: list[ClickKeyframeEvent],
+    config: ClickKeyframeConfig,
+    visual_signatures: dict[str, ClickVisualSignature] | None = None,
+) -> ClickKeyframeSelection:
+    clusters = _cluster_click_keyframe_events(events, config)
+    selected: list[ClickKeyframeEvent] = []
+    reasons_by_event_id: dict[str, str] = {}
+    cluster_by_event_id: dict[str, int] = {}
+    cluster_size_by_event_id: dict[str, int] = {}
+    visual_diff_by_event_id: dict[str, float] = {}
+    skipped_duplicate = 0
+    visual_kept = 0
+    repeated_clusters = 0
+    visual_threshold = max(0.0, float(config.visual_change_threshold))
+
+    for cluster_index, cluster in enumerate(clusters, start=1):
+        cluster_size = len(cluster)
+        if cluster_size > 1:
+            repeated_clusters += 1
+        keep_ids: set[str] = set()
+        keep_reasons: dict[str, str] = {}
+        if cluster_size <= 2:
+            for event in cluster:
+                keep_ids.add(event.event_id)
+                keep_reasons[event.event_id] = "single" if cluster_size == 1 else "cluster_edge"
+        else:
+            first = cluster[0]
+            last = cluster[-1]
+            keep_ids.add(first.event_id)
+            keep_reasons[first.event_id] = "cluster_start"
+            previous_kept = first
+            previous_signature = visual_signatures.get(first.event_id) if visual_signatures else None
+            for event in cluster[1:-1]:
+                current_signature = visual_signatures.get(event.event_id) if visual_signatures else None
+                visual_diff = (
+                    _visual_signature_difference(previous_signature, current_signature)
+                    if previous_signature is not None and current_signature is not None
+                    else 0.0
+                )
+                if current_signature is not None:
+                    visual_diff_by_event_id[event.event_id] = round(visual_diff, 4)
+                if visual_threshold > 0 and visual_diff >= visual_threshold:
+                    keep_ids.add(event.event_id)
+                    keep_reasons[event.event_id] = "visual_change"
+                    previous_kept = event
+                    previous_signature = current_signature
+                    visual_kept += 1
+                else:
+                    skipped_duplicate += 1
+            keep_ids.add(last.event_id)
+            if last.event_id not in keep_reasons:
+                last_signature = visual_signatures.get(last.event_id) if visual_signatures else None
+                last_diff = (
+                    _visual_signature_difference(previous_signature, last_signature)
+                    if previous_signature is not None and last_signature is not None
+                    else 0.0
+                )
+                if last_signature is not None:
+                    visual_diff_by_event_id[last.event_id] = round(last_diff, 4)
+                keep_reasons[last.event_id] = "cluster_end"
+
+        for event in cluster:
+            cluster_by_event_id[event.event_id] = cluster_index
+            cluster_size_by_event_id[event.event_id] = cluster_size
+            if event.event_id in keep_ids:
+                selected.append(event)
+                reasons_by_event_id[event.event_id] = keep_reasons.get(event.event_id, "selected")
+            elif cluster_size <= 2:
+                skipped_duplicate += 1
+
+    capped_selected, cap_skipped = _apply_click_keyframe_cap(selected, config)
+    if cap_skipped:
+        capped_ids = {event.event_id for event in capped_selected}
+        for event in selected:
+            if event.event_id not in capped_ids:
+                reasons_by_event_id.pop(event.event_id, None)
+
+    skipped_count = skipped_duplicate + cap_skipped
+    stats = {
+        "strategy": "cluster_edges_plus_visual_change",
+        "events_total": len(events),
+        "events_kept": len(capped_selected),
+        "events_skipped": skipped_count,
+        "duplicate_skipped": skipped_duplicate,
+        "cap_skipped": cap_skipped,
+        "clusters_total": len(clusters),
+        "repeated_clusters": repeated_clusters,
+        "visual_change_kept": visual_kept,
+        "cluster_time_seconds": max(0.0, float(config.time_dedupe_seconds)),
+        "cluster_distance_px": max(0.0, float(config.distance_dedupe_px)),
+        "visual_change_threshold": visual_threshold,
+        "visual_sample_size": max(8, int(config.visual_sample_size)),
+        "visual_crop_radius_px": max(0, int(config.visual_crop_radius_px)),
+        "max_frames": max(0, int(config.max_frames)),
+    }
+    return ClickKeyframeSelection(
+        capped_selected,
+        skipped_count,
+        reasons_by_event_id,
+        cluster_by_event_id,
+        cluster_size_by_event_id,
+        visual_diff_by_event_id,
+        stats,
+    )
+
+
+def build_click_keyframe_visual_signatures(
+    events: list[ClickKeyframeEvent],
+    config: ClickKeyframeConfig,
+    video_info: VideoInfo,
+    ffmpeg: str,
+    progress: ProgressCallback | None = None,
+) -> dict[str, ClickVisualSignature]:
+    clusters = _cluster_click_keyframe_events(events, config)
+    events_to_sample = [event for cluster in clusters if len(cluster) > 2 for event in cluster]
+    signatures: dict[str, ClickVisualSignature] = {}
+    total = len(events_to_sample)
+    if not total or float(config.visual_change_threshold) <= 0:
+        return signatures
+    offset = max(0.0, float(config.frame_offset_seconds))
+    for index, event in enumerate(events_to_sample, start=1):
+        if progress:
+            progress(0, 0, f"去重分析 {index}/{total}")
+        seconds = min(video_info.duration_seconds, max(0.0, event.seconds + offset))
+        image = _extract_frame(ffmpeg, config.video_path, seconds)
+        try:
+            signatures[event.event_id] = _click_visual_signature(image, event, config)
+        finally:
+            image.close()
+    return signatures
+
+
+def _cluster_click_keyframe_events(
+    events: list[ClickKeyframeEvent],
+    config: ClickKeyframeConfig,
+) -> list[list[ClickKeyframeEvent]]:
+    if not events:
+        return []
+    time_threshold = max(0.0, float(config.time_dedupe_seconds))
+    distance_threshold = max(0.0, float(config.distance_dedupe_px))
+    if time_threshold <= 0 or distance_threshold <= 0:
+        return [[event] for event in events]
+
+    clusters: list[list[ClickKeyframeEvent]] = []
+    current: list[ClickKeyframeEvent] = [events[0]]
+    for event in events[1:]:
+        previous = current[-1]
+        if _is_near_duplicate_click(previous, event, time_threshold, distance_threshold):
+            current.append(event)
+        else:
+            clusters.append(current)
+            current = [event]
+    clusters.append(current)
+    return clusters
+
+
+def _apply_click_keyframe_cap(
+    events: list[ClickKeyframeEvent],
+    config: ClickKeyframeConfig,
+) -> tuple[list[ClickKeyframeEvent], int]:
+    max_frames = max(0, int(config.max_frames))
+    if not max_frames or len(events) <= max_frames:
+        return events, 0
+    return events[:max_frames], len(events) - max_frames
 
 
 def build_click_keyframe_plan(
     events: list[ClickKeyframeEvent],
     config: ClickKeyframeConfig,
     video_info: VideoInfo,
+    selection: ClickKeyframeSelection | None = None,
 ) -> list[FramePlanEntry]:
     cols = max(1, int(config.sheet_cols))
     rows = max(1, int(config.sheet_rows))
@@ -514,6 +692,10 @@ def build_click_keyframe_plan(
                 source_index=event.source_index,
                 click_x=event.x,
                 click_y=event.y,
+                selection_reason=selection.reasons_by_event_id.get(event.event_id, "") if selection else "",
+                cluster_index=selection.cluster_by_event_id.get(event.event_id, 0) if selection else 0,
+                cluster_size=selection.cluster_size_by_event_id.get(event.event_id, 0) if selection else 0,
+                visual_diff=selection.visual_diff_by_event_id.get(event.event_id) if selection else None,
             )
         )
     return plan
@@ -532,10 +714,21 @@ def generate_click_keyframe_sheets(
     _cleanup_click_keyframe_outputs(output_dir, config.output_basename)
 
     events = load_click_keyframe_events(config)
-    selected, skipped = select_click_keyframes(events, config)
+    visual_signatures = build_click_keyframe_visual_signatures(events, config, video_info, ffmpeg, progress)
+    selection = select_click_keyframes_with_stats(events, config, visual_signatures)
+    selected = selection.events
+    skipped = selection.skipped_count
     if not selected:
         index_json = output_dir / f"{config.output_basename}_index.json"
-        _write_click_keyframe_index_json(index_json, [], [], events_total=len(events), events_skipped=skipped, warnings=["无点击事件"])
+        _write_click_keyframe_index_json(
+            index_json,
+            [],
+            [],
+            events_total=len(events),
+            events_skipped=skipped,
+            warnings=["无点击事件"],
+            selection_stats=selection.stats,
+        )
         return ClickKeyframeResult(output_dir, [], index_json, len(events), 0, skipped, ["无点击事件"])
 
     valid_events: list[ClickKeyframeEvent] = []
@@ -545,10 +738,10 @@ def generate_click_keyframe_sheets(
             warnings.append(f"跳过超出视频时长的事件 {event.event_id}：{format_timecode(event.seconds)}")
             continue
         valid_events.append(event)
-    plan = build_click_keyframe_plan(valid_events, config, video_info)
+    plan = build_click_keyframe_plan(valid_events, config, video_info, selection)
     if not plan:
         index_json = output_dir / f"{config.output_basename}_index.json"
-        _write_click_keyframe_index_json(index_json, [], [], len(events), skipped, warnings)
+        _write_click_keyframe_index_json(index_json, [], [], len(events), skipped, warnings, selection_stats=selection.stats)
         return ClickKeyframeResult(output_dir, [], index_json, len(events), 0, skipped, warnings)
 
     sheet_paths: list[Path] = []
@@ -580,7 +773,7 @@ def generate_click_keyframe_sheets(
         sheet_image.close()
 
     index_json = output_dir / f"{config.output_basename}_index.json"
-    _write_click_keyframe_index_json(index_json, plan, sheet_paths, len(events), skipped, warnings)
+    _write_click_keyframe_index_json(index_json, plan, sheet_paths, len(events), skipped, warnings, selection_stats=selection.stats)
     if progress:
         progress(total, total, "完成")
     return ClickKeyframeResult(output_dir, sheet_paths, index_json, len(events), len(plan), skipped, warnings)
@@ -646,6 +839,51 @@ def _is_near_duplicate_click(
     return distance <= distance_threshold
 
 
+def _click_visual_signature(
+    image: Image.Image,
+    event: ClickKeyframeEvent,
+    config: ClickKeyframeConfig,
+) -> ClickVisualSignature:
+    sample_size = max(8, int(config.visual_sample_size))
+    grayscale = image.convert("L")
+    global_pixels = _downsample_pixels(grayscale, sample_size)
+    local_pixels = None
+    radius = max(0, int(config.visual_crop_radius_px))
+    if radius and event.x is not None and event.y is not None:
+        left = max(0, int(round(event.x - radius)))
+        top = max(0, int(round(event.y - radius)))
+        right = min(grayscale.width, int(round(event.x + radius)))
+        bottom = min(grayscale.height, int(round(event.y + radius)))
+        if right > left and bottom > top:
+            local_pixels = _downsample_pixels(grayscale.crop((left, top, right, bottom)), sample_size)
+    return ClickVisualSignature(global_pixels=global_pixels, local_pixels=local_pixels)
+
+
+def _downsample_pixels(image: Image.Image, sample_size: int) -> tuple[int, ...]:
+    sampled = image.resize((sample_size, sample_size), Image.Resampling.BILINEAR)
+    return tuple(int(value) for value in sampled.getdata())
+
+
+def _visual_signature_difference(
+    previous: ClickVisualSignature,
+    current: ClickVisualSignature,
+) -> float:
+    global_diff = _pixel_mean_absolute_difference(previous.global_pixels, current.global_pixels)
+    local_diff = 0.0
+    if previous.local_pixels is not None and current.local_pixels is not None:
+        local_diff = _pixel_mean_absolute_difference(previous.local_pixels, current.local_pixels)
+    return max(global_diff, local_diff)
+
+
+def _pixel_mean_absolute_difference(previous: tuple[int, ...], current: tuple[int, ...]) -> float:
+    if not previous or not current:
+        return 0.0
+    count = min(len(previous), len(current))
+    if count <= 0:
+        return 0.0
+    return sum(abs(previous[index] - current[index]) for index in range(count)) / (255 * count)
+
+
 def _frame_overlay_config(config: ClickKeyframeConfig) -> FrameSamplerConfig:
     return FrameSamplerConfig(
         video_path=config.video_path,
@@ -674,6 +912,7 @@ def _write_click_keyframe_index_json(
     events_total: int,
     events_skipped: int,
     warnings: list[str],
+    selection_stats: dict[str, Any] | None = None,
 ) -> None:
     sheet_by_index = {index + 1: sheet_path.name for index, sheet_path in enumerate(sheet_paths)}
     payload = {
@@ -681,6 +920,7 @@ def _write_click_keyframe_index_json(
         "events_kept": len(plan),
         "events_skipped": events_skipped,
         "warnings": warnings,
+        "selection": selection_stats or {},
         "frames": [
             {
                 "index": entry.index,
@@ -694,6 +934,10 @@ def _write_click_keyframe_index_json(
                 "sheet": sheet_by_index.get(entry.sheet_index, ""),
                 "sheet_row": entry.sheet_row,
                 "sheet_col": entry.sheet_col,
+                "selection_reason": entry.selection_reason,
+                "cluster_index": entry.cluster_index,
+                "cluster_size": entry.cluster_size,
+                "visual_diff": entry.visual_diff,
             }
             for entry in plan
         ],

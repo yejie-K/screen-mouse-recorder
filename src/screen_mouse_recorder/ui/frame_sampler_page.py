@@ -141,15 +141,15 @@ def _build_basic_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
         width=10,
     )
     mode.grid(row=0, column=1, sticky="ew", pady=5, padx=(0, 14))
-    _labeled_entry(panel, 0, 2, "帧上限", app.frame_keyframe_max_var, "0")
+    _labeled_entry(panel, 0, 2, "画面差异%", app.frame_keyframe_visual_threshold_var, "12")
     create_timecode_fields(panel, 1, 0, "开始时间", app.frame_start_var, columnspan=3)
     create_timecode_fields(panel, 2, 0, "结束时间", app.frame_end_var, allow_empty=True, empty_text="到结尾", columnspan=3)
     _labeled_entry(panel, 3, 0, "抽帧间隔秒", app.frame_interval_var, "10")
     _labeled_entry(panel, 3, 2, "单帧宽度", app.frame_thumb_width_var, "360")
     _labeled_entry(panel, 4, 0, "拼图列数", app.frame_cols_var, "5")
     _labeled_entry(panel, 4, 2, "拼图行数", app.frame_rows_var, "6")
-    _labeled_entry(panel, 5, 0, "时间去重停用", app.frame_keyframe_time_dedupe_var, "0")
-    _labeled_entry(panel, 5, 2, "距离去重停用", app.frame_keyframe_distance_dedupe_var, "0")
+    _labeled_entry(panel, 5, 0, "聚簇时间ms", app.frame_keyframe_time_dedupe_var, "1500")
+    _labeled_entry(panel, 5, 2, "聚簇距离px", app.frame_keyframe_distance_dedupe_var, "80")
 
     ttk.Label(panel, text="导出质量", style="Panel.TLabel").grid(row=6, column=0, sticky="w", pady=5, padx=(0, 8))
     quality = ttk.Combobox(

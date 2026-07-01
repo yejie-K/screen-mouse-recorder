@@ -94,6 +94,9 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertTrue(config.frame_sampler_show_timestamp)
         self.assertEqual(config.frame_sampler_mode, "interval")
         self.assertEqual(config.frame_sampler_keyframe_max_frames, 0)
+        self.assertEqual(config.frame_sampler_keyframe_time_dedupe_ms, 1500)
+        self.assertEqual(config.frame_sampler_keyframe_distance_dedupe_px, 80)
+        self.assertEqual(config.frame_sampler_keyframe_visual_threshold_percent, 12)
         self.assertTrue(config.frame_sampler_draw_click_markers)
 
     def test_frame_sampler_timecode_helpers(self) -> None:
@@ -234,7 +237,7 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(thumb.size, (200, 200))
         self.assertEqual(position, (50, 50))
 
-    def test_click_keyframes_load_click_events_without_default_dedupe(self) -> None:
+    def test_click_keyframes_cluster_dedupe_keeps_edges_without_visual(self) -> None:
         with TemporaryDirectory() as directory:
             events_path = Path(directory) / "mouse_events.jsonl"
             events_path.write_text(
@@ -242,10 +245,11 @@ class CoreSmokeTests(unittest.TestCase):
                     [
                         json.dumps({"event_id": "a", "event_type": "click", "t_video_ms": 1000, "video_x": 10, "video_y": 10}),
                         json.dumps({"event_id": "b", "event_type": "click", "t_video_ms": 1200, "video_x": 18, "video_y": 14}),
-                        json.dumps({"event_id": "c", "event_type": "click", "t_video_ms": 1800, "video_x": 18, "video_y": 14}),
+                        json.dumps({"event_id": "c", "event_type": "click", "t_video_ms": 1400, "video_x": 19, "video_y": 14}),
+                        json.dumps({"event_id": "d", "event_type": "click", "t_video_ms": 1800, "video_x": 18, "video_y": 14}),
                         json.dumps(
                             {
-                                "event_id": "d",
+                                "event_id": "e",
                                 "event_type": "double_click_candidate",
                                 "t_video_ms": 1900,
                                 "video_x": 18,
@@ -260,16 +264,16 @@ class CoreSmokeTests(unittest.TestCase):
                 video_path=Path("recording.mp4"),
                 events_path=events_path,
                 output_dir=Path(directory),
-                time_dedupe_seconds=0.5,
+                time_dedupe_seconds=1.0,
                 distance_dedupe_px=20,
             )
 
             events = load_click_keyframe_events(config)
             selected, skipped = select_click_keyframes(events, config)
 
-        self.assertEqual([event.event_id for event in events], ["a", "b", "c"])
-        self.assertEqual([event.event_id for event in selected], ["a", "b", "c"])
-        self.assertEqual(skipped, 0)
+        self.assertEqual([event.event_id for event in events], ["a", "b", "c", "d"])
+        self.assertEqual([event.event_id for event in selected], ["a", "d"])
+        self.assertEqual(skipped, 2)
 
     def test_click_keyframes_still_respects_max_frames(self) -> None:
         with TemporaryDirectory() as directory:
@@ -287,6 +291,8 @@ class CoreSmokeTests(unittest.TestCase):
                 events_path=events_path,
                 output_dir=Path(directory),
                 max_frames=2,
+                time_dedupe_seconds=0,
+                distance_dedupe_px=0,
             )
 
             selected, skipped = select_click_keyframes(load_click_keyframe_events(config), config)
