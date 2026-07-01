@@ -36,8 +36,8 @@ class AppConfig:
     frame_sampler_rows: int = 6
     frame_sampler_thumb_width: int = 360
     frame_sampler_keyframe_max_frames: int = 60
-    frame_sampler_keyframe_time_dedupe_ms: int = 500
-    frame_sampler_keyframe_distance_dedupe_px: int = 20
+    frame_sampler_keyframe_time_dedupe_ms: int = 0
+    frame_sampler_keyframe_distance_dedupe_px: int = 0
     frame_sampler_jpeg_quality: int = 85
     frame_sampler_quality_preset: str = "高"
     frame_sampler_show_timestamp: bool = True

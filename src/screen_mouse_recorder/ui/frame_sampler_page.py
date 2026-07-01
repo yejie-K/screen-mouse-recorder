@@ -43,7 +43,7 @@ def build_frame_sampler_page(app: Any, parent: tk.Widget) -> None:
 
     actions = ttk.Frame(parent, style="App.TFrame")
     actions.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-    actions.configure(height=42)
+    actions.configure(height=68)
     actions.grid_propagate(False)
     actions.columnconfigure(3, weight=1)
     app.frame_estimate_button = ttk.Button(actions, text="预估", command=app.estimate_frame_sampling, width=10)
@@ -66,6 +66,21 @@ def build_frame_sampler_page(app: Any, parent: tk.Widget) -> None:
         anchor="e",
         font=FONT_SMALL,
     ).grid(row=0, column=3, sticky="e")
+    app.frame_progress_bar = ttk.Progressbar(
+        actions,
+        variable=app.frame_progress_percent_var,
+        maximum=100,
+        mode="determinate",
+    )
+    app.frame_progress_bar.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+    tk.Label(
+        actions,
+        textvariable=app.frame_remaining_var,
+        bg=COLORS["app_bg"],
+        fg=COLORS["muted"],
+        anchor="e",
+        font=FONT_SMALL,
+    ).grid(row=1, column=3, sticky="e", pady=(8, 0))
 
 
 def _build_source_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
@@ -133,8 +148,8 @@ def _build_basic_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
     _labeled_entry(panel, 3, 2, "单帧宽度", app.frame_thumb_width_var, "360")
     _labeled_entry(panel, 4, 0, "拼图列数", app.frame_cols_var, "5")
     _labeled_entry(panel, 4, 2, "拼图行数", app.frame_rows_var, "6")
-    _labeled_entry(panel, 5, 0, "时间去重 ms", app.frame_keyframe_time_dedupe_var, "500")
-    _labeled_entry(panel, 5, 2, "距离去重 px", app.frame_keyframe_distance_dedupe_var, "20")
+    _labeled_entry(panel, 5, 0, "时间去重停用", app.frame_keyframe_time_dedupe_var, "0")
+    _labeled_entry(panel, 5, 2, "距离去重停用", app.frame_keyframe_distance_dedupe_var, "0")
 
     ttk.Label(panel, text="导出质量", style="Panel.TLabel").grid(row=6, column=0, sticky="w", pady=5, padx=(0, 8))
     quality = ttk.Combobox(

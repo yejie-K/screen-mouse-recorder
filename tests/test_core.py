@@ -234,7 +234,7 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(thumb.size, (200, 200))
         self.assertEqual(position, (50, 50))
 
-    def test_click_keyframes_load_and_dedupe_click_events(self) -> None:
+    def test_click_keyframes_load_click_events_without_default_dedupe(self) -> None:
         with TemporaryDirectory() as directory:
             events_path = Path(directory) / "mouse_events.jsonl"
             events_path.write_text(
@@ -268,8 +268,31 @@ class CoreSmokeTests(unittest.TestCase):
             selected, skipped = select_click_keyframes(events, config)
 
         self.assertEqual([event.event_id for event in events], ["a", "b", "c"])
-        self.assertEqual([event.event_id for event in selected], ["a", "c"])
-        self.assertEqual(skipped, 1)
+        self.assertEqual([event.event_id for event in selected], ["a", "b", "c"])
+        self.assertEqual(skipped, 0)
+
+    def test_click_keyframes_still_respects_max_frames(self) -> None:
+        with TemporaryDirectory() as directory:
+            events_path = Path(directory) / "mouse_events.jsonl"
+            events_path.write_text(
+                "\n".join(
+                    json.dumps({"event_id": f"evt_{index}", "event_type": "click", "t_video_ms": index * 100, "video_x": index})
+                    for index in range(1, 5)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config = ClickKeyframeConfig(
+                video_path=Path("recording.mp4"),
+                events_path=events_path,
+                output_dir=Path(directory),
+                max_frames=2,
+            )
+
+            selected, skipped = select_click_keyframes(load_click_keyframe_events(config), config)
+
+        self.assertEqual([event.event_id for event in selected], ["evt_1", "evt_2"])
+        self.assertEqual(skipped, 2)
 
     def test_click_keyframes_can_include_double_click_and_paginate_plan(self) -> None:
         with TemporaryDirectory() as directory:

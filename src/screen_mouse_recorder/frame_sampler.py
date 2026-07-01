@@ -67,8 +67,8 @@ class ClickKeyframeConfig:
     sheet_cols: int = 5
     sheet_rows: int = 6
     thumb_width: int = 360
-    time_dedupe_seconds: float = 0.5
-    distance_dedupe_px: float = 20.0
+    time_dedupe_seconds: float = 0.0
+    distance_dedupe_px: float = 0.0
     include_double_clicks: bool = False
     include_drag_events: bool = False
     frame_offset_seconds: float = 0.0
@@ -264,7 +264,15 @@ def probe_video(video_path: Path, ffmpeg_path: str | None = None) -> VideoInfo:
         "json",
         str(video_path),
     ]
-    proc = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    proc = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        **_hidden_subprocess_kwargs(),
+    )
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or "ffprobe failed")
     data = json.loads(proc.stdout)
@@ -462,13 +470,14 @@ def select_click_keyframes(events: list[ClickKeyframeEvent], config: ClickKeyfra
     selected: list[ClickKeyframeEvent] = []
     skipped = 0
     max_frames = max(1, int(config.max_frames))
-    time_threshold = max(0.0, float(config.time_dedupe_seconds))
-    distance_threshold = max(0.0, float(config.distance_dedupe_px))
 
     for event in events:
-        if selected and _is_near_duplicate_click(selected[-1], event, time_threshold, distance_threshold):
-            skipped += 1
-            continue
+        # 去重逻辑暂时关闭，方便对照原始点击数据检查抽帧结果。
+        # time_threshold = max(0.0, float(config.time_dedupe_seconds))
+        # distance_threshold = max(0.0, float(config.distance_dedupe_px))
+        # if selected and _is_near_duplicate_click(selected[-1], event, time_threshold, distance_threshold):
+        #     skipped += 1
+        #     continue
         if len(selected) >= max_frames:
             skipped += 1
             continue
@@ -718,7 +727,7 @@ def _extract_frame(ffmpeg: str, video_path: Path, seconds: float) -> Image.Image
         "png",
         "-",
     ]
-    proc = subprocess.run(command, capture_output=True, check=False)
+    proc = subprocess.run(command, capture_output=True, check=False, **_hidden_subprocess_kwargs())
     if proc.returncode != 0 or not proc.stdout:
         message = proc.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(message or f"Failed to extract frame at {seconds:.3f}s")
@@ -932,6 +941,11 @@ def _safe_float(value: object) -> float | None:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
+
+
+def _hidden_subprocess_kwargs() -> dict[str, Any]:
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return {"creationflags": creationflags} if creationflags else {}
 
 
 def _jsonable(value: object) -> object:

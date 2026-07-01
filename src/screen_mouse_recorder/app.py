@@ -121,6 +121,8 @@ class ScreenMouseRecorderApp:
         self.frame_eta_var = tk.StringVar(value="--")
         self.frame_status_var = tk.StringVar(value="选择视频后可预估抽帧数量和合成图数量。")
         self.frame_progress_var = tk.StringVar(value="")
+        self.frame_progress_percent_var = tk.DoubleVar(value=0.0)
+        self.frame_remaining_var = tk.StringVar(value="")
         self.frame_mode_var = tk.StringVar(
             value="点击关键帧" if self.config.frame_sampler_mode == "click_keyframes" else "均匀抽帧"
         )
@@ -150,6 +152,7 @@ class ScreenMouseRecorderApp:
         self.frame_output_is_default = True
         self.frame_video_info: VideoInfo | None = None
         self.frame_is_running = False
+        self.frame_progress_started_ms: float | None = None
         self.frame_crop_canvas: tk.Canvas | None = None
         self.frame_crop_preview_original: Image.Image | None = None
         self.frame_crop_preview_photo: ImageTk.PhotoImage | None = None
@@ -1693,7 +1696,7 @@ class ScreenMouseRecorderApp:
                 self.frame_sheet_count_var.set(str(sheet_count))
                 self.frame_eta_var.set(f"约 {max(1, len(selected)) * 0.3:.0f} 秒")
                 self.frame_status_var.set(
-                    f"识别点击事件 {len(events)} 个，去重后保留 {len(selected)} 张；跳过 {skipped} 个。"
+                    f"识别点击事件 {len(events)} 个，当前未去重，保留 {len(selected)} 张；超过上限跳过 {skipped} 个。"
                 )
                 self._sync_frame_config_from_ui()
                 self._save_config()
@@ -1773,19 +1776,38 @@ class ScreenMouseRecorderApp:
         state = "disabled" if running else "normal"
         self.frame_estimate_button.configure(state=state)
         self.frame_generate_button.configure(state=state)
+        if running:
+            self.frame_progress_started_ms = monotonic_ms()
+            self.frame_progress_percent_var.set(0)
+            self.frame_progress_var.set("准备生成...")
+            self.frame_remaining_var.set("预计剩余 --")
+        else:
+            self.frame_progress_started_ms = None
         self.frame_status_var.set("生成中..." if running else "就绪")
 
     def _update_frame_progress(self, done: int, total: int, message: str) -> None:
         if total <= 0:
             self.frame_progress_var.set(message)
+            self.frame_remaining_var.set("")
             return
+        done = max(0, min(done, total))
+        self.frame_progress_percent_var.set(done / total * 100)
         self.frame_progress_var.set(f"{done}/{total} · {message}")
+        started = self.frame_progress_started_ms
+        if started is None or done <= 0:
+            self.frame_remaining_var.set("预计剩余 --")
+            return
+        elapsed_seconds = max(0.0, (monotonic_ms() - started) / 1000)
+        remaining_seconds = elapsed_seconds / done * max(0, total - done)
+        self.frame_remaining_var.set(f"预计剩余 {self._format_duration_seconds(remaining_seconds)}")
 
     def _on_frame_sampling_done(self, result: Any, error: Exception | None) -> None:
         self._set_frame_running(False)
         if error is not None:
             self.frame_status_var.set(f"生成失败：{error}")
             self.frame_progress_var.set("")
+            self.frame_progress_percent_var.set(0)
+            self.frame_remaining_var.set("生成失败")
             messagebox.showerror("生成失败", str(error))
             return
         if result is None:
@@ -1805,7 +1827,9 @@ class ScreenMouseRecorderApp:
             self.frame_status_var.set(
                 f"已生成 {len(result.sheet_paths)} 张合成图，索引和预览页已写入输出目录。"
             )
+        self.frame_progress_percent_var.set(100)
         self.frame_progress_var.set("完成")
+        self.frame_remaining_var.set("完成")
 
     def open_frame_output(self) -> None:
         path = self.frame_output_dir or Path(self.frame_output_var.get() or "")
@@ -1891,8 +1915,8 @@ class ScreenMouseRecorderApp:
             sheet_cols=self._safe_int_string(self.frame_cols_var, 5, 1, 12),
             sheet_rows=self._safe_int_string(self.frame_rows_var, 6, 1, 12),
             thumb_width=self._safe_int_string(self.frame_thumb_width_var, 360, 120, 1600),
-            time_dedupe_seconds=self._safe_int_string(self.frame_keyframe_time_dedupe_var, 500, 0, 10000) / 1000,
-            distance_dedupe_px=self._safe_int_string(self.frame_keyframe_distance_dedupe_var, 20, 0, 1000),
+            time_dedupe_seconds=self._safe_int_string(self.frame_keyframe_time_dedupe_var, 0, 0, 10000) / 1000,
+            distance_dedupe_px=self._safe_int_string(self.frame_keyframe_distance_dedupe_var, 0, 0, 1000),
             show_timestamp=self.frame_show_timestamp_var.get(),
             show_index=self.frame_show_index_var.get(),
             draw_click_markers=self.frame_draw_click_markers_var.get(),
@@ -1950,10 +1974,10 @@ class ScreenMouseRecorderApp:
         self.config.frame_sampler_thumb_width = self._safe_int_string(self.frame_thumb_width_var, 360, 120, 1600)
         self.config.frame_sampler_keyframe_max_frames = self._safe_int_string(self.frame_keyframe_max_var, 60, 1, 500)
         self.config.frame_sampler_keyframe_time_dedupe_ms = self._safe_int_string(
-            self.frame_keyframe_time_dedupe_var, 500, 0, 10000
+            self.frame_keyframe_time_dedupe_var, 0, 0, 10000
         )
         self.config.frame_sampler_keyframe_distance_dedupe_px = self._safe_int_string(
-            self.frame_keyframe_distance_dedupe_var, 20, 0, 1000
+            self.frame_keyframe_distance_dedupe_var, 0, 0, 1000
         )
         quality, _output_format = self._frame_quality_settings()
         self.config.frame_sampler_jpeg_quality = quality
@@ -2223,6 +2247,17 @@ class ScreenMouseRecorderApp:
         except (tk.TclError, ValueError):
             value = default
         return max(minimum, min(maximum, value))
+
+    @staticmethod
+    def _format_duration_seconds(seconds: float) -> str:
+        seconds = max(0, int(round(seconds)))
+        minutes, secs = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours}小时{minutes:02d}分"
+        if minutes:
+            return f"{minutes}分{secs:02d}秒"
+        return f"{secs}秒"
 
 
 def main(base_dir: Path | None = None) -> None:
