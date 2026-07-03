@@ -38,7 +38,7 @@ class AppConfig:
     frame_sampler_keyframe_max_frames: int = 0
     frame_sampler_keyframe_time_dedupe_ms: int = 1500
     frame_sampler_keyframe_distance_dedupe_px: int = 80
-    frame_sampler_keyframe_visual_threshold_percent: int = 12
+    frame_sampler_keyframe_visual_threshold_percent: int = 22
     frame_sampler_jpeg_quality: int = 85
     frame_sampler_quality_preset: str = "高"
     frame_sampler_show_timestamp: bool = True

@@ -26,6 +26,7 @@ from screen_mouse_recorder.frame_sampler import (
     DenseRange,
     FrameSamplerConfig,
     VideoInfo,
+    _add_silent_gap_keyframes,
     _nearest_click_marker,
     _prepare_frame_image,
     build_click_keyframe_plan,
@@ -37,6 +38,7 @@ from screen_mouse_recorder.frame_sampler import (
     load_click_markers,
     parse_timecode,
     select_click_keyframes,
+    select_click_keyframes_with_stats,
 )
 from PIL import Image
 from screen_mouse_recorder.models import Region, TimingContext
@@ -96,7 +98,7 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(config.frame_sampler_keyframe_max_frames, 0)
         self.assertEqual(config.frame_sampler_keyframe_time_dedupe_ms, 1500)
         self.assertEqual(config.frame_sampler_keyframe_distance_dedupe_px, 80)
-        self.assertEqual(config.frame_sampler_keyframe_visual_threshold_percent, 12)
+        self.assertEqual(config.frame_sampler_keyframe_visual_threshold_percent, 22)
         self.assertTrue(config.frame_sampler_draw_click_markers)
 
     def test_frame_sampler_timecode_helpers(self) -> None:
@@ -237,7 +239,7 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(thumb.size, (200, 200))
         self.assertEqual(position, (50, 50))
 
-    def test_click_keyframes_cluster_dedupe_keeps_edges_without_visual(self) -> None:
+    def test_click_keyframes_cluster_dedupe_keeps_head_for_short_cluster_without_visual(self) -> None:
         with TemporaryDirectory() as directory:
             events_path = Path(directory) / "mouse_events.jsonl"
             events_path.write_text(
@@ -272,8 +274,43 @@ class CoreSmokeTests(unittest.TestCase):
             selected, skipped = select_click_keyframes(events, config)
 
         self.assertEqual([event.event_id for event in events], ["a", "b", "c", "d"])
-        self.assertEqual([event.event_id for event in selected], ["a", "d"])
-        self.assertEqual(skipped, 2)
+        self.assertEqual([event.event_id for event in selected], ["a"])
+        self.assertEqual(skipped, 3)
+
+    def test_click_keyframes_cluster_dedupe_keeps_tail_for_large_cluster(self) -> None:
+        with TemporaryDirectory() as directory:
+            events_path = Path(directory) / "mouse_events.jsonl"
+            events_path.write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "event_id": f"evt_{index}",
+                            "event_type": "click",
+                            "t_video_ms": 1000 + index * 100,
+                            "video_x": 10 + index,
+                            "video_y": 10,
+                        }
+                    )
+                    for index in range(5)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config = ClickKeyframeConfig(
+                video_path=Path("recording.mp4"),
+                events_path=events_path,
+                output_dir=Path(directory),
+                time_dedupe_seconds=1.0,
+                distance_dedupe_px=20,
+                cluster_tail_min_size=5,
+            )
+
+            events = load_click_keyframe_events(config)
+            selection = select_click_keyframes_with_stats(events, config)
+
+        self.assertEqual([event.event_id for event in selection.events], ["evt_0", "evt_4"])
+        self.assertEqual(selection.skipped_count, 3)
+        self.assertEqual(selection.stats["cluster_tail_kept"], 1)
 
     def test_click_keyframes_still_respects_max_frames(self) -> None:
         with TemporaryDirectory() as directory:
@@ -299,6 +336,41 @@ class CoreSmokeTests(unittest.TestCase):
 
         self.assertEqual([event.event_id for event in selected], ["evt_1", "evt_2"])
         self.assertEqual(skipped, 2)
+
+    def test_click_keyframes_adds_silent_gap_compensation(self) -> None:
+        with TemporaryDirectory() as directory:
+            events_path = Path(directory) / "mouse_events.jsonl"
+            events_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event_id": "a", "event_type": "click", "t_video_ms": 10000, "video_x": 10, "video_y": 10}),
+                        json.dumps({"event_id": "b", "event_type": "click", "t_video_ms": 50000, "video_x": 200, "video_y": 200}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config = ClickKeyframeConfig(
+                video_path=Path("recording.mp4"),
+                events_path=events_path,
+                output_dir=Path(directory),
+                time_dedupe_seconds=1.5,
+                distance_dedupe_px=80,
+                silent_gap_seconds=10,
+                silent_long_gap_seconds=25,
+                silent_max_frames_per_gap=2,
+            )
+            video = VideoInfo(Path("recording.mp4"), duration_seconds=60, width=300, height=500, fps=30, file_size_bytes=1000)
+
+            events = load_click_keyframe_events(config)
+            selection = select_click_keyframes_with_stats(events, config)
+            combined = _add_silent_gap_keyframes(selection.events, config, video, selection)
+
+        self.assertEqual([event.event_type for event in combined], ["click", "silent_gap", "silent_gap", "click"])
+        self.assertEqual([round(event.seconds, 3) for event in combined], [10.0, 23.333, 36.667, 50.0])
+        self.assertEqual(selection.stats["silent_gap_frames_added"], 2)
+        self.assertEqual(selection.stats["timeline_max_gap_before_seconds"], 40)
+        self.assertLess(selection.stats["timeline_max_gap_after_seconds"], 14)
 
     def test_click_keyframes_can_include_double_click_and_paginate_plan(self) -> None:
         with TemporaryDirectory() as directory:

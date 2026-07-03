@@ -140,7 +140,7 @@ def _maybe_generate_click_keyframes(
                 thumb_width=320,
                 time_dedupe_seconds=1.5,
                 distance_dedupe_px=80.0,
-                visual_change_threshold=0.12,
+                visual_change_threshold=0.22,
                 include_double_clicks=False,
                 include_drag_events=False,
                 show_timestamp=True,

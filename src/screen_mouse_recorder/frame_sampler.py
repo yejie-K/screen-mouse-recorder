@@ -86,9 +86,14 @@ class ClickKeyframeConfig:
     thumb_width: int = 360
     time_dedupe_seconds: float = 1.5
     distance_dedupe_px: float = 80.0
-    visual_change_threshold: float = 0.12
+    visual_change_threshold: float = 0.22
     visual_sample_size: int = 48
     visual_crop_radius_px: int = 140
+    cluster_tail_min_size: int = 5
+    cluster_tail_min_duration_seconds: float = 2.0
+    silent_gap_seconds: float = 10.0
+    silent_long_gap_seconds: float = 25.0
+    silent_max_frames_per_gap: int = 5
     include_double_clicks: bool = False
     include_drag_events: bool = False
     frame_offset_seconds: float = 0.0
@@ -508,8 +513,11 @@ def select_click_keyframes_with_stats(
     visual_diff_by_event_id: dict[str, float] = {}
     skipped_duplicate = 0
     visual_kept = 0
+    cluster_tail_kept = 0
     repeated_clusters = 0
     visual_threshold = max(0.0, float(config.visual_change_threshold))
+    tail_min_size = max(2, int(config.cluster_tail_min_size))
+    tail_min_duration = max(0.0, float(config.cluster_tail_min_duration_seconds))
 
     for cluster_index, cluster in enumerate(clusters, start=1):
         cluster_size = len(cluster)
@@ -517,18 +525,21 @@ def select_click_keyframes_with_stats(
             repeated_clusters += 1
         keep_ids: set[str] = set()
         keep_reasons: dict[str, str] = {}
-        if cluster_size <= 2:
-            for event in cluster:
-                keep_ids.add(event.event_id)
-                keep_reasons[event.event_id] = "single" if cluster_size == 1 else "cluster_edge"
+        if cluster_size == 1:
+            event = cluster[0]
+            keep_ids.add(event.event_id)
+            keep_reasons[event.event_id] = "single"
         else:
             first = cluster[0]
             last = cluster[-1]
+            cluster_duration = max(0.0, last.seconds - first.seconds)
+            keep_tail = cluster_size >= tail_min_size or cluster_duration >= tail_min_duration
             keep_ids.add(first.event_id)
             keep_reasons[first.event_id] = "cluster_start"
-            previous_kept = first
             previous_signature = visual_signatures.get(first.event_id) if visual_signatures else None
-            for event in cluster[1:-1]:
+            for event in cluster[1:]:
+                if event.event_id == last.event_id and keep_tail:
+                    continue
                 current_signature = visual_signatures.get(event.event_id) if visual_signatures else None
                 visual_diff = (
                     _visual_signature_difference(previous_signature, current_signature)
@@ -540,13 +551,9 @@ def select_click_keyframes_with_stats(
                 if visual_threshold > 0 and visual_diff >= visual_threshold:
                     keep_ids.add(event.event_id)
                     keep_reasons[event.event_id] = "visual_change"
-                    previous_kept = event
                     previous_signature = current_signature
                     visual_kept += 1
-                else:
-                    skipped_duplicate += 1
-            keep_ids.add(last.event_id)
-            if last.event_id not in keep_reasons:
+            if keep_tail and last.event_id not in keep_ids:
                 last_signature = visual_signatures.get(last.event_id) if visual_signatures else None
                 last_diff = (
                     _visual_signature_difference(previous_signature, last_signature)
@@ -555,7 +562,9 @@ def select_click_keyframes_with_stats(
                 )
                 if last_signature is not None:
                     visual_diff_by_event_id[last.event_id] = round(last_diff, 4)
+                keep_ids.add(last.event_id)
                 keep_reasons[last.event_id] = "cluster_end"
+                cluster_tail_kept += 1
 
         for event in cluster:
             cluster_by_event_id[event.event_id] = cluster_index
@@ -563,7 +572,7 @@ def select_click_keyframes_with_stats(
             if event.event_id in keep_ids:
                 selected.append(event)
                 reasons_by_event_id[event.event_id] = keep_reasons.get(event.event_id, "selected")
-            elif cluster_size <= 2:
+            else:
                 skipped_duplicate += 1
 
     capped_selected, cap_skipped = _apply_click_keyframe_cap(selected, config)
@@ -575,7 +584,7 @@ def select_click_keyframes_with_stats(
 
     skipped_count = skipped_duplicate + cap_skipped
     stats = {
-        "strategy": "cluster_edges_plus_visual_change",
+        "strategy": "cluster_head_tail_for_large_clusters_plus_visual_change",
         "events_total": len(events),
         "events_kept": len(capped_selected),
         "events_skipped": skipped_count,
@@ -584,12 +593,16 @@ def select_click_keyframes_with_stats(
         "clusters_total": len(clusters),
         "repeated_clusters": repeated_clusters,
         "visual_change_kept": visual_kept,
+        "cluster_tail_kept": cluster_tail_kept,
         "cluster_time_seconds": max(0.0, float(config.time_dedupe_seconds)),
         "cluster_distance_px": max(0.0, float(config.distance_dedupe_px)),
+        "cluster_tail_min_size": tail_min_size,
+        "cluster_tail_min_duration_seconds": tail_min_duration,
         "visual_change_threshold": visual_threshold,
         "visual_sample_size": max(8, int(config.visual_sample_size)),
         "visual_crop_radius_px": max(0, int(config.visual_crop_radius_px)),
         "max_frames": max(0, int(config.max_frames)),
+        "selection_reason_counts": _selection_reason_counts(reasons_by_event_id),
     }
     return ClickKeyframeSelection(
         capped_selected,
@@ -660,6 +673,97 @@ def _apply_click_keyframe_cap(
     if not max_frames or len(events) <= max_frames:
         return events, 0
     return events[:max_frames], len(events) - max_frames
+
+
+def _selection_reason_counts(reasons_by_event_id: dict[str, str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for reason in reasons_by_event_id.values():
+        key = reason or "selected"
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _add_silent_gap_keyframes(
+    events: list[ClickKeyframeEvent],
+    config: ClickKeyframeConfig,
+    video_info: VideoInfo,
+    selection: ClickKeyframeSelection,
+) -> list[ClickKeyframeEvent]:
+    gap_threshold = max(0.0, float(config.silent_gap_seconds))
+    if gap_threshold <= 0:
+        selection.stats["silent_gap_enabled"] = False
+        selection.stats["timeline_max_gap_before_seconds"] = round(_timeline_max_gap(events, video_info.duration_seconds), 3)
+        selection.stats["timeline_max_gap_after_seconds"] = selection.stats["timeline_max_gap_before_seconds"]
+        selection.stats["silent_gap_frames_added"] = 0
+        selection.stats["events_kept_with_silent_gaps"] = len(events)
+        selection.stats["selection_reason_counts"] = _selection_reason_counts(selection.reasons_by_event_id)
+        return events
+
+    sorted_events = sorted(events, key=lambda event: (event.seconds, event.source_index))
+    long_gap_threshold = max(gap_threshold, float(config.silent_long_gap_seconds))
+    max_per_gap = max(1, int(config.silent_max_frames_per_gap))
+    added: list[ClickKeyframeEvent] = []
+    gaps_total = 0
+
+    anchors: list[tuple[float, float]] = []
+    if sorted_events:
+        first_time = sorted_events[0].seconds
+        if first_time > gap_threshold:
+            anchors.append((0.0, first_time))
+        for previous, current in zip(sorted_events, sorted_events[1:]):
+            anchors.append((previous.seconds, current.seconds))
+        last_time = sorted_events[-1].seconds
+        if video_info.duration_seconds - last_time > gap_threshold:
+            anchors.append((last_time, video_info.duration_seconds))
+    elif video_info.duration_seconds > gap_threshold:
+        anchors.append((0.0, video_info.duration_seconds))
+
+    for start, end in anchors:
+        gap = max(0.0, end - start)
+        if gap < gap_threshold:
+            continue
+        gaps_total += 1
+        count = min(max_per_gap, max(1, math.ceil(gap / gap_threshold) - 1))
+        positions = (
+            [start + gap / 2]
+            if count == 1
+            else [start + gap * (index + 1) / (count + 1) for index in range(count)]
+        )
+        for index, seconds in enumerate(positions, start=1):
+            event_id = f"silent_{int(round(start * 1000))}_{int(round(end * 1000))}_{index}"
+            event = ClickKeyframeEvent(
+                source_index=0,
+                seconds=round(min(video_info.duration_seconds, max(0.0, seconds)), 3),
+                event_type="silent_gap",
+                event_id=event_id,
+                x=None,
+                y=None,
+            )
+            added.append(event)
+            selection.reasons_by_event_id[event_id] = "silent_gap"
+            selection.cluster_by_event_id[event_id] = 0
+            selection.cluster_size_by_event_id[event_id] = 0
+
+    combined = sorted(sorted_events + added, key=lambda event: (event.seconds, event.source_index, event.event_id))
+    selection.stats["silent_gap_enabled"] = True
+    selection.stats["silent_gap_seconds"] = gap_threshold
+    selection.stats["silent_long_gap_seconds"] = long_gap_threshold
+    selection.stats["silent_max_frames_per_gap"] = max_per_gap
+    selection.stats["silent_gaps_total"] = gaps_total
+    selection.stats["silent_gap_frames_added"] = len(added)
+    selection.stats["timeline_max_gap_before_seconds"] = round(_timeline_max_gap(sorted_events, video_info.duration_seconds), 3)
+    selection.stats["timeline_max_gap_after_seconds"] = round(_timeline_max_gap(combined, video_info.duration_seconds), 3)
+    selection.stats["events_kept_with_silent_gaps"] = len(combined)
+    selection.stats["selection_reason_counts"] = _selection_reason_counts(selection.reasons_by_event_id)
+    return combined
+
+
+def _timeline_max_gap(events: list[ClickKeyframeEvent], duration_seconds: float) -> float:
+    duration = max(0.0, float(duration_seconds))
+    times = [0.0] + [event.seconds for event in sorted(events, key=lambda event: event.seconds)] + [duration]
+    if len(times) < 2:
+        return duration
+    return max(max(0.0, current - previous) for previous, current in zip(times, times[1:]))
 
 
 def build_click_keyframe_plan(
@@ -738,6 +842,7 @@ def generate_click_keyframe_sheets(
             warnings.append(f"跳过超出视频时长的事件 {event.event_id}：{format_timecode(event.seconds)}")
             continue
         valid_events.append(event)
+    valid_events = _add_silent_gap_keyframes(valid_events, config, video_info, selection)
     plan = build_click_keyframe_plan(valid_events, config, video_info, selection)
     if not plan:
         index_json = output_dir / f"{config.output_basename}_index.json"
