@@ -16,7 +16,7 @@
   "drag_min_distance_px": 10,
   "double_click_window_ms": 500,
   "ffmpeg_path": null,
-  "frame_sampler_output_root": "frame_sheets",
+  "frame_sampler_output_root": "frame_exports",
   "frame_sampler_mode": "interval",
   "frame_sampler_start": "00:00",
   "frame_sampler_end": "",

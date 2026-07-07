@@ -1,6 +1,7 @@
 # Local configuration and recordings
 config.json
 sessions/
+AGENTS.md
 
 # Generated packages and binaries
 *.zip

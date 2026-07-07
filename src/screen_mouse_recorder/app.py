@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 import os
 from pathlib import Path
 import platform
-import re
+import subprocess
+import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -13,8 +13,9 @@ from typing import Any, Callable
 from PIL import Image, ImageTk
 
 from . import __version__
-from .analysis import default_analysis_output_dir, describe_analysis_source, generate_behavior_report
 from .config import AppConfig
+from .diagnostics.error_report import format_error_dialog_message
+from .diagnostics.service import ErrorReporter
 from .frame_sampler import (
     ClickKeyframeConfig,
     CropRegion,
@@ -22,24 +23,32 @@ from .frame_sampler import (
     FrameSamplerConfig,
     VideoInfo,
     default_output_dir,
+    estimate_click_keyframe_sampling,
     estimate_sampling,
     extract_preview_frame,
     format_timecode,
-    generate_click_keyframe_sheets,
-    load_click_keyframe_events,
     parse_timecode,
     probe_video,
-    sample_video_to_sheets,
-    select_click_keyframes,
+    run_frame_export,
 )
+from .frame_export.ui_state import (
+    ClickKeyframeFormState,
+    FrameSamplerFormState,
+    build_click_keyframe_config_from_state,
+    build_frame_sampler_config_from_state,
+    collect_dense_ranges,
+    crop_region_from_values,
+    quality_settings,
+)
+from .frame_export.progress import completed_progress, failed_progress, starting_progress, update_progress
 from .models import Region, TimingContext, monotonic_ms, wall_time_iso
 from .mouse_logger import MouseActivityLogger
+from .naming import FRAME_EXPORT_DIR_NAME, build_session_id, sanitize_session_name
 from .postprocess import generate_summary
+from .reporting.service import BehaviorReportJob, make_behavior_report_job, run_behavior_report_job
 from .region_selector import RecordingRegionOverlay, RegionSelector, run_click_calibration, show_sync_marker
 from .storage import JsonlWriter, SessionStorage
-from .ui.analysis_page import build_analysis_page
 from .ui.components import (
-    analysis_output_row as create_analysis_output_row,
     metric_card,
     number_field as create_number_field,
     option_checkbutton,
@@ -48,6 +57,7 @@ from .ui.components import (
 from .ui.frame_sampler_page import build_frame_sampler_page, create_timecode_inputs
 from .ui.record_page import build_record_page
 from .ui.theme import COLORS, apply_app_theme
+from .updater import UpdateStatus, apply_update, check_for_updates
 from .video_recorder import FFmpegRecorder, concat_mp4_segments
 
 
@@ -57,6 +67,7 @@ class ScreenMouseRecorderApp:
         self.base_dir = base_dir
         self.config_path = base_dir / "config.json"
         self.config = AppConfig.load(self.config_path)
+        self.error_reporter = ErrorReporter(base_dir)
         self.region: Region | None = None
         self.storage: SessionStorage | None = None
         self.timing: TimingContext | None = None
@@ -99,19 +110,7 @@ class ScreenMouseRecorderApp:
         self.pause_count_var = tk.StringVar(value="0")
         self.mouse_video_var = tk.StringVar(value="视频可见")
         self.asset_status_var = tk.StringVar(value="等待生成")
-        self.analysis_input_var = tk.StringVar(value="未选择")
-        self.analysis_output_var = tk.StringVar(value="analysis_output")
-        self.analysis_summary_var = tk.StringVar(value="等待导入")
-        self.analysis_status_var = tk.StringVar(value="就绪")
-        self.analysis_events_var = tk.StringVar(value="--")
-        self.analysis_samples_var = tk.StringVar(value="--")
-        self.analysis_clicks_var = tk.StringVar(value="--")
-        self.analysis_duration_var = tk.StringVar(value="--")
-        self.analysis_meta_var = tk.StringVar(value="--")
-        self.analysis_source_path: Path | None = None
-        self.analysis_output_dir: Path | None = None
-        self.analysis_output_status_vars: dict[str, tk.StringVar] = {}
-        self.analysis_output_badges: dict[str, tk.Label] = {}
+        self.auto_report_output_dir: Path | None = None
         self.frame_video_var = tk.StringVar(value="未选择")
         self.frame_output_var = tk.StringVar(value=str((base_dir / self.config.frame_sampler_output_root).resolve()))
         self.frame_duration_var = tk.StringVar(value="--")
@@ -163,12 +162,24 @@ class ScreenMouseRecorderApp:
         self.frame_crop_preview_offset = (0, 0)
         self.frame_crop_drag_start: tuple[int, int] | None = None
         self.frame_crop_rect_id: int | None = None
+        self.frame_crop_preview_seconds_var = tk.DoubleVar(value=0.0)
+        self.frame_crop_preview_time_var = tk.StringVar(value="00:00:00 / --")
+        self.frame_crop_time_scale: ttk.Scale | None = None
+        self.frame_crop_preview_buttons: list[ttk.Button] = []
+        self.frame_crop_preview_after_id: str | None = None
+        self.frame_crop_preview_controls_updating = False
+        self.frame_crop_value_trace_updating = False
         self.frame_dense_rows_container: ttk.Frame | None = None
         self.frame_dense_ranges: list[dict[str, tk.StringVar]] = []
         self.frame_click_events_path: Path | None = self._resolve_config_path(self.config.frame_sampler_click_events_path)
         self.frame_click_events_var = tk.StringVar(value=str(self.frame_click_events_path or ""))
         self.main_notebook: ttk.Notebook | None = None
         self._tab_animation_after_ids: list[str] = []
+        self.update_button: tk.Button | None = None
+        self.update_status: UpdateStatus | None = None
+        self.update_check_running = False
+        self.update_apply_running = False
+        self.update_prompt_shown = False
 
         self.record_outside_var = tk.BooleanVar(value=self.config.record_outside_region)
         self.samples_var = tk.BooleanVar(value=self.config.record_mouse_samples)
@@ -200,6 +211,7 @@ class ScreenMouseRecorderApp:
         self._refresh_readiness()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.bind("<Escape>", self._on_escape)
+        self.root.after(1800, self.check_for_updates)
 
     def _build_ui(self) -> None:
         self.root.title("Screen Mouse Recorder")
@@ -218,7 +230,25 @@ class ScreenMouseRecorderApp:
         header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         header.columnconfigure(1, weight=1)
         ttk.Label(header, text="Screen Mouse Recorder", style="Title.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text=f"v{__version__}", style="App.TLabel").grid(row=0, column=1, sticky="w", padx=(10, 0), pady=(7, 0))
+        version_box = ttk.Frame(header, style="App.TFrame")
+        version_box.grid(row=0, column=1, sticky="w", padx=(10, 0), pady=(7, 0))
+        ttk.Label(version_box, text=f"v{__version__}", style="App.TLabel").pack(side="left")
+        self.update_button = tk.Button(
+            version_box,
+            text="↑",
+            command=self.prompt_update,
+            bg=COLORS["green"],
+            fg="white",
+            activebackground="#0b6a0b",
+            activeforeground="white",
+            bd=0,
+            padx=5,
+            pady=0,
+            width=2,
+            cursor="hand2",
+            font=("Segoe UI", 8, "bold"),
+            takefocus=False,
+        )
         tk.Label(
             header,
             textvariable=self.env_var,
@@ -248,14 +278,11 @@ class ScreenMouseRecorderApp:
         main_notebook.grid(row=1, column=0, sticky="nsew")
 
         record_page = ttk.Frame(main_notebook, style="TabPage.TFrame", padding=(0, 12, 0, 0))
-        analysis_page = ttk.Frame(main_notebook, style="TabPage.TFrame", padding=(0, 12, 0, 0))
         frame_sampler_page = ttk.Frame(main_notebook, style="TabPage.TFrame", padding=(0, 12, 0, 0))
         main_notebook.add(record_page, text="录制")
-        main_notebook.add(analysis_page, text="分析处理")
         main_notebook.add(frame_sampler_page, text="抽帧拼图")
 
         build_record_page(self, record_page)
-        self._build_analysis_page(analysis_page)
         self._build_frame_sampler_page(frame_sampler_page)
 
     def _animate_tab_change(self, _event: tk.Event | None = None) -> None:
@@ -288,8 +315,146 @@ class ScreenMouseRecorderApp:
         set_style("TabPagePulse.TFrame")
         self._tab_animation_after_ids.append(self.root.after(90, lambda: set_style("TabPage.TFrame")))
 
-    def _build_analysis_page(self, parent: tk.Widget) -> None:
-        build_analysis_page(self, parent)
+    def check_for_updates(self) -> None:
+        if self.update_check_running or self.update_apply_running:
+            return
+        self.update_check_running = True
+
+        def worker() -> None:
+            status = check_for_updates(self.base_dir)
+            try:
+                self.root.after(0, lambda: self._on_update_check_done(status))
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="update-check", daemon=True).start()
+
+    def _on_update_check_done(self, status: UpdateStatus) -> None:
+        self.update_check_running = False
+        self.update_status = status
+        if not status.available:
+            self._hide_update_button()
+            return
+
+        self._show_update_button()
+        if self.update_prompt_shown or status.dirty:
+            return
+        self.update_prompt_shown = True
+        self.prompt_update()
+
+    def _show_update_button(self) -> None:
+        if self.update_button is None:
+            return
+        self.update_button.configure(state="normal", text="↑")
+        if not self.update_button.winfo_ismapped():
+            self.update_button.pack(side="left", padx=(6, 0))
+
+    def _hide_update_button(self) -> None:
+        if self.update_button is not None and self.update_button.winfo_ismapped():
+            self.update_button.pack_forget()
+
+    def prompt_update(self) -> None:
+        status = self.update_status
+        if status is None or not status.available:
+            self.check_for_updates()
+            return
+        if self.is_recording or self.is_paused or self.is_starting or self.is_stopping or self.frame_is_running:
+            messagebox.showinfo("暂不能更新", "录制或抽帧运行中不能更新，请结束当前任务后再试。")
+            return
+        if status.dirty:
+            messagebox.showwarning(
+                "暂不能自动更新",
+                "检测到本地代码目录有改动，已阻止自动拉取。\n\n"
+                "录制数据不会影响更新；这里指的是源码文件存在本地改动。请先提交、备份或切换到干净版本后再更新。",
+            )
+            return
+
+        message = (
+            f"GitHub 上发现新版本，当前分支 {status.current_branch} 落后 {status.behind_count} 个提交。\n\n"
+            "同意后会从 GitHub 拉取代码并只执行 fast-forward 更新；sessions、auto_report、frame_exports 等本地数据不会被删除。\n\n"
+            "现在更新吗？"
+        )
+        if not messagebox.askyesno("发现新版本", message):
+            return
+        self.apply_update_from_github()
+
+    def apply_update_from_github(self) -> None:
+        if self.update_apply_running:
+            return
+        status = self.update_status
+        if status is None:
+            return
+        self.update_apply_running = True
+        if self.update_button is not None:
+            self.update_button.configure(state="disabled", text="...")
+
+        def worker() -> None:
+            result = apply_update(status)
+            try:
+                self.root.after(0, lambda: self._on_update_applied(result))
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="update-apply", daemon=True).start()
+
+    def _on_update_applied(self, result: UpdateStatus) -> None:
+        self.update_apply_running = False
+        self.update_status = result
+        if result.message == "更新完成":
+            self._hide_update_button()
+            if messagebox.askyesno("更新完成", "最新版代码已拉取完成，需要重启软件后生效。\n\n是否现在重启？"):
+                self._restart_app()
+            return
+        self._show_update_button()
+        self._show_error_report(
+            "更新失败",
+            "update_apply",
+            RuntimeError(result.message or "更新失败，请稍后重试。"),
+            {
+                "branch": result.current_branch,
+                "target_ref": result.target_ref,
+                "behind_count": result.behind_count,
+                "ahead_count": result.ahead_count,
+                "dirty": result.dirty,
+            },
+        )
+
+    def _restart_app(self) -> None:
+        command = [sys.executable, *sys.argv]
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        kwargs = {"creationflags": creationflags} if creationflags else {}
+        try:
+            subprocess.Popen(command, cwd=str(self.base_dir), close_fds=True, **kwargs)
+        except OSError as exc:
+            self._show_error_report("重启失败", "app_restart", exc)
+            return
+        self.root.destroy()
+
+    def _create_error_report(
+        self,
+        stage: str,
+        error: BaseException,
+        context: dict[str, Any] | None = None,
+    ) -> tuple[Any, Path | None]:
+        result = self.error_reporter.create(stage, error, context)
+        return result.report, result.txt_path
+
+    def _show_error_report(
+        self,
+        title: str,
+        stage: str,
+        error: BaseException,
+        context: dict[str, Any] | None = None,
+        *,
+        warning: bool = False,
+    ) -> tuple[Any, Path | None]:
+        report, txt_path = self._create_error_report(stage, error, context)
+        message = format_error_dialog_message(report, txt_path)
+        if warning:
+            messagebox.showwarning(title, message)
+        else:
+            messagebox.showerror(title, message)
+        return report, txt_path
 
     def _build_frame_sampler_page(self, parent: tk.Widget) -> None:
         build_frame_sampler_page(self, parent)
@@ -345,16 +510,6 @@ class ScreenMouseRecorderApp:
     def _metric(self, parent: tk.Widget, column: int, label: str, variable: tk.StringVar) -> None:
         metric_card(parent, column, label, variable, padx=(6, 0))
 
-    def _analysis_metric(self, parent: tk.Widget, column: int, label: str, variable: tk.StringVar) -> None:
-        metric_card(
-            parent,
-            column,
-            label,
-            variable,
-            value_font=("Segoe UI", 13, "bold"),
-            padx=(8, 0),
-        )
-
     def _frame_metric(self, parent: tk.Widget, column: int, label: str, variable: tk.StringVar) -> None:
         metric_card(
             parent,
@@ -364,11 +519,6 @@ class ScreenMouseRecorderApp:
             value_font=("Segoe UI", 13, "bold"),
             padx=(8, 0),
         )
-
-    def _analysis_output_row(self, parent: tk.Widget, row: int, column: int, key: str, title: str, filename: str) -> None:
-        status_var = tk.StringVar(value="待")
-        self.analysis_output_status_vars[key] = status_var
-        self.analysis_output_badges[key] = create_analysis_output_row(parent, row, column, title, filename, status_var)
 
     def _option(
         self,
@@ -447,9 +597,15 @@ class ScreenMouseRecorderApp:
         ]
         for variable in vars_to_track:
             variable.trace_add("write", lambda *_args: self._on_config_changed())
+        for variable in (self.frame_crop_x_var, self.frame_crop_y_var, self.frame_crop_w_var, self.frame_crop_h_var):
+            variable.trace_add("write", lambda *_args: self._on_frame_crop_values_changed())
+        self.frame_crop_enabled_var.trace_add("write", lambda *_args: self._on_frame_crop_option_changed())
         self.frame_mode_var.trace_add("write", lambda *_args: self._refresh_frame_default_output_dir(force=True))
         self.frame_start_var.trace_add("write", lambda *_args: self._on_frame_time_range_changed())
         self.frame_end_var.trace_add("write", lambda *_args: self._on_frame_time_range_changed())
+        self.frame_dense_enabled_var.trace_add("write", lambda *_args: self._refresh_frame_default_output_dir())
+        self.frame_dense_start_var.trace_add("write", lambda *_args: self._refresh_frame_default_output_dir())
+        self.frame_dense_end_var.trace_add("write", lambda *_args: self._refresh_frame_default_output_dir())
 
     def _play_action(self) -> None:
         if self.is_paused:
@@ -647,7 +803,7 @@ class ScreenMouseRecorderApp:
         self._sync_config_from_ui()
         self._save_config()
         if platform.system().lower() != "windows":
-            messagebox.showerror("平台不支持", "当前 MVP 使用 Windows 鼠标 hook 和 FFmpeg gdigrab。")
+            messagebox.showerror("平台不支持", "当前版本仅支持 Windows 鼠标 hook 和 FFmpeg gdigrab。")
             return
         if self.region is None:
             self.status_var.set("缺少区域")
@@ -811,7 +967,16 @@ class ScreenMouseRecorderApp:
             self.region_overlay.set_mode("ready")
         self.status_var.set("启动失败")
         self._refresh_readiness()
-        messagebox.showerror("启动失败", str(exc))
+        self._show_error_report(
+            "启动失败",
+            "recording_start",
+            exc,
+            {
+                "output_root": self.config.output_root_path(self.base_dir),
+                "ffmpeg_path": self.config.ffmpeg_path,
+                "region": self.region,
+            },
+        )
 
     def stop_recording(self) -> None:
         if self.is_stopping:
@@ -861,7 +1026,13 @@ class ScreenMouseRecorderApp:
         if error is not None:
             self.is_paused = False
             self._set_recording_ui()
-            messagebox.showwarning("暂停失败", f"暂停录制失败：{error}")
+            self._show_error_report(
+                "暂停失败",
+                "recording_pause",
+                error,
+                {"session_dir": self.storage.session_dir if self.storage is not None else None},
+                warning=True,
+            )
             return
         self.is_paused = True
         self.pause_started_monotonic_ms = pause_started
@@ -940,7 +1111,13 @@ class ScreenMouseRecorderApp:
 
     def _on_recording_stopped(self, summary: dict[str, Any] | None, error: Exception | None) -> None:
         if error is not None:
-            messagebox.showwarning("保存失败", f"录制已停止，但保存或摘要生成失败：{error}")
+            self._show_error_report(
+                "保存失败",
+                "recording_stop",
+                error,
+                {"session_dir": self.storage.session_dir if self.storage is not None else None},
+                warning=True,
+            )
         self.is_stopping = False
         self.is_paused = False
         self.is_pausing = False
@@ -965,10 +1142,88 @@ class ScreenMouseRecorderApp:
                 f"事件 {summary['events_total']} · 采样 {summary['samples_total']} · "
                 f"点击 {summary['clicks_total']} · 滚轮 {summary['wheel_events']} · 拖拽 {summary['drag_count']}"
             )
+            if self.storage is not None:
+                self._start_auto_behavior_report(self.storage.session_dir)
         else:
             self.status_var.set("已停止")
             self.summary_var.set("未生成摘要")
         self._refresh_readiness()
+
+    def _start_auto_behavior_report(self, session_dir: Path) -> None:
+        job = make_behavior_report_job(session_dir, ffmpeg_path=self.config.ffmpeg_path)
+        self.auto_report_output_dir = job.output_dir
+        self._set_asset_status_extra("图表 --")
+        self._append_recording_summary_note("图表生成中")
+
+        def worker() -> None:
+            result = None
+            error: Exception | None = None
+            try:
+                result = run_behavior_report_job(job)
+            except Exception as exc:
+                error = exc
+            try:
+                self.root.after(0, lambda: self._on_auto_behavior_report_done(job, result, error))
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="auto-behavior-report", daemon=True).start()
+
+    def _on_auto_behavior_report_done(self, job: BehaviorReportJob, result: Any, error: Exception | None) -> None:
+        current_session = self.storage.session_dir.resolve() if self.storage is not None else None
+        if current_session != job.source_path:
+            return
+        if error is not None:
+            report, _txt_path = self._create_error_report(
+                "auto_report",
+                error,
+                {"source_path": job.source_path, "output_dir": job.output_dir},
+            )
+            self._set_asset_status_extra("图表 --")
+            self._append_recording_summary_note(f"图表生成失败 {report.code}", 96)
+            return
+        if result is None:
+            report, _txt_path = self._create_error_report(
+                "auto_report",
+                RuntimeError("报告服务未返回生成结果"),
+                {"source_path": job.source_path, "output_dir": job.output_dir},
+            )
+            self._set_asset_status_extra("图表 --")
+            self._append_recording_summary_note(f"图表生成失败 {report.code}", 96)
+            return
+
+        self.auto_report_output_dir = result.output_dir
+        self._refresh_asset_status()
+        self._set_asset_status_extra("图表 OK")
+        self._append_recording_summary_note("图表已生成")
+
+    def _append_recording_summary_note(self, note: str, max_chars: int = 88) -> None:
+        current = self.summary_var.get().strip()
+        if note != "图表生成中":
+            current = self._remove_summary_note(current, "图表生成中")
+        if note in current:
+            return
+        if not current or current in {"暂无摘要", "未生成摘要"}:
+            next_text = note
+        else:
+            next_text = f"{current} · {note}"
+        self.summary_var.set(self._compact_text(next_text, max_chars))
+
+    @staticmethod
+    def _remove_summary_note(text: str, note: str) -> str:
+        for pattern in (f" · {note}", f"{note} · ", note):
+            text = text.replace(pattern, "")
+        return text.strip()
+
+    def _set_asset_status_extra(self, extra: str) -> None:
+        current = self.asset_status_var.get().strip()
+        parts = [
+            part.strip()
+            for part in current.split("·")
+            if part.strip() and not part.strip().startswith("图表")
+        ]
+        parts.append(extra)
+        self.asset_status_var.set(" · ".join(parts))
 
     def _mark_current_segment_end(self, end_monotonic_ms: float) -> None:
         if self.current_segment_record is None or self.timing is None:
@@ -1146,7 +1401,12 @@ class ScreenMouseRecorderApp:
         try:
             summary = generate_summary(self.storage)
         except Exception as exc:
-            messagebox.showerror("生成失败", str(exc))
+            self._show_error_report(
+                "生成失败",
+                "summary_regenerate",
+                exc,
+                {"session_dir": self.storage.session_dir},
+            )
             return
         self.summary_var.set(
             f"事件 {summary['events_total']} · 采样 {summary['samples_total']} · "
@@ -1154,130 +1414,6 @@ class ScreenMouseRecorderApp:
         )
         self._refresh_asset_status()
         messagebox.showinfo("已生成", "mouse_summary.json、mouse_summary.xlsx 和 mouse_analysis.xlsx 已重新生成。")
-
-    def choose_analysis_xlsx(self) -> None:
-        initial_dir = self.storage.session_dir if self.storage is not None else self.config.output_root_path(self.base_dir)
-        path = filedialog.askopenfilename(
-            title="选择 xlsx",
-            initialdir=initial_dir,
-            filetypes=[("Excel 工作簿", "*.xlsx"), ("所有文件", "*.*")],
-        )
-        if path:
-            self._set_analysis_source(Path(path))
-
-    def choose_analysis_folder(self) -> None:
-        initial_dir = self.storage.session_dir if self.storage is not None else self.config.output_root_path(self.base_dir)
-        path = filedialog.askdirectory(title="选择 session 文件夹", initialdir=initial_dir)
-        if path:
-            self._set_analysis_source(Path(path))
-
-    def _set_analysis_source(self, path: Path) -> None:
-        path = path.resolve()
-        self.analysis_source_path = path
-        self.analysis_output_dir = default_analysis_output_dir(path)
-        self.analysis_input_var.set(str(path))
-        self.analysis_output_var.set(str(self.analysis_output_dir))
-        self.analysis_status_var.set("已导入")
-        self.analysis_open_button.configure(state="normal" if self.analysis_output_dir.exists() else "disabled")
-
-        info = describe_analysis_source(path)
-        self.analysis_events_var.set(str(info["events_total"]))
-        self.analysis_samples_var.set(str(info["samples_total"]))
-        self.analysis_clicks_var.set(str(info["clicks_total"]))
-        self.analysis_duration_var.set(f"{info['duration_minutes']}分")
-        self.analysis_meta_var.set("OK" if info["has_meta"] else "--")
-        warning_text = self._compact_text("；".join(str(item) for item in info["warnings"]), 62) if info["warnings"] else ""
-        self.analysis_summary_var.set(warning_text or "可分析")
-        self._refresh_analysis_output_statuses()
-
-    def run_import_analysis(self) -> None:
-        if self.analysis_source_path is None:
-            messagebox.showwarning("需要导入", "请先选择 xlsx 或 session 文件夹。")
-            return
-        source_path = self.analysis_source_path
-        output_dir = self.analysis_output_dir or default_analysis_output_dir(source_path)
-        self._set_analysis_running(True)
-
-        def worker() -> None:
-            result = None
-            error: Exception | None = None
-            try:
-                result = generate_behavior_report(source_path, output_dir, self.config.ffmpeg_path)
-            except Exception as exc:
-                error = exc
-            self.root.after(0, lambda: self._on_import_analysis_done(result, error))
-
-        threading.Thread(target=worker, name="import-analysis", daemon=True).start()
-
-    def _set_analysis_running(self, running: bool) -> None:
-        self.analysis_generate_button.configure(state="disabled" if running else "normal")
-        self.analysis_status_var.set("生成中" if running else "就绪")
-        if running:
-            self._set_all_analysis_output_statuses("生成中", "#f0b429", "#17212b")
-
-    def _on_import_analysis_done(self, result: Any, error: Exception | None) -> None:
-        self._set_analysis_running(False)
-        if error is not None:
-            self.analysis_status_var.set("生成失败")
-            self._set_all_analysis_output_statuses("失败", "#d83b3b", "white")
-            messagebox.showerror("生成失败", str(error))
-            return
-        if result is None:
-            self.analysis_status_var.set("生成失败")
-            return
-        self.analysis_output_dir = result.output_dir
-        self.analysis_output_var.set(str(result.output_dir))
-        self.analysis_open_button.configure(state="normal")
-        metrics = result.metrics
-        self.analysis_events_var.set(str(metrics["events_total"]))
-        self.analysis_samples_var.set(str(metrics["samples_total"]))
-        self.analysis_clicks_var.set(str(metrics["clicks_total"]))
-        self.analysis_duration_var.set(f"{metrics['duration_minutes']}分")
-        self.analysis_meta_var.set("OK")
-        warning_text = self._compact_text("；".join(result.warnings), 62) if result.warnings else ""
-        self.analysis_summary_var.set(warning_text or f"已生成 · {metrics['clicks_per_minute']} 点击/分")
-        self.analysis_status_var.set("已生成")
-        self._refresh_analysis_output_statuses()
-
-    def _refresh_analysis_output_statuses(self) -> None:
-        if self.analysis_output_dir is None:
-            self._set_all_analysis_output_statuses("待", "#dfe7ec", "#263238")
-            return
-        files = {
-            "report": "mouse_behavior_report.xlsx",
-            "click_keyframes": "click_keyframes.png",
-            "heatmap_circle": "click_heatmap_circle.png",
-            "timeline": "activity_timeline.png",
-            "scatter": "click_scatter.png",
-            "drag_durations": "drag_durations.png",
-        }
-        for key, filename in files.items():
-            path = self.analysis_output_dir / filename
-            if path.exists() and path.stat().st_size > 0:
-                self._set_analysis_output_status(key, "OK", "#1f9d55", "white")
-            else:
-                self._set_analysis_output_status(key, "待", "#dfe7ec", "#263238")
-
-    def _set_all_analysis_output_statuses(self, text: str, bg: str, fg: str) -> None:
-        for key in self.analysis_output_status_vars:
-            self._set_analysis_output_status(key, text, bg, fg)
-
-    def _set_analysis_output_status(self, key: str, text: str, bg: str, fg: str) -> None:
-        if key in self.analysis_output_status_vars:
-            self.analysis_output_status_vars[key].set(text)
-        if key in self.analysis_output_badges:
-            self.analysis_output_badges[key].configure(bg=bg, fg=fg)
-
-    def open_analysis_output(self) -> None:
-        if self.analysis_output_dir is None:
-            if self.analysis_source_path is None:
-                messagebox.showinfo("没有输出", "请先生成分析报告。")
-                return
-            self.analysis_output_dir = default_analysis_output_dir(self.analysis_source_path)
-        if not self.analysis_output_dir.exists():
-            messagebox.showinfo("没有输出", "当前还没有生成分析输出。")
-            return
-        os.startfile(self.analysis_output_dir)
 
     def choose_frame_video(self) -> None:
         initial_dir = self.storage.session_dir if self.storage is not None else self.config.output_root_path(self.base_dir)
@@ -1318,6 +1454,8 @@ class ScreenMouseRecorderApp:
         self.frame_click_events_var.set(str(self.frame_click_events_path or ""))
         if hasattr(self, "frame_open_button"):
             self.frame_open_button.configure(state="disabled")
+        self._cancel_frame_crop_preview_reload()
+        self._set_frame_crop_preview_seconds(0.0, reload=False)
         self._clear_frame_crop_preview()
 
         def worker() -> None:
@@ -1336,14 +1474,23 @@ class ScreenMouseRecorderApp:
             self.frame_video_info = None
             self.frame_duration_var.set("--")
             self.frame_resolution_var.set("--")
+            self._set_frame_crop_preview_seconds(0.0, reload=False)
+            self.sync_frame_crop_preview_controls()
             self.frame_status_var.set(f"读取失败：{error}")
-            messagebox.showerror("读取视频失败", str(error))
+            self._show_error_report(
+                "读取视频失败",
+                "frame_probe",
+                error,
+                {"video_path": self.frame_source_path, "ffmpeg_path": self.config.ffmpeg_path},
+            )
             return
         if info is None:
             return
         self.frame_video_info = info
         self.frame_duration_var.set(format_timecode(info.duration_seconds))
         self.frame_resolution_var.set(f"{info.width}x{info.height}")
+        self._set_frame_crop_preview_seconds(parse_timecode(self.frame_start_var.get()) or 0.0, reload=False)
+        self.sync_frame_crop_preview_controls()
         self._refresh_frame_default_output_dir()
         self.frame_status_var.set("视频已读取，可调整参数后预估或生成。")
         self.load_frame_crop_preview(show_message=False)
@@ -1368,11 +1515,22 @@ class ScreenMouseRecorderApp:
             if current_path != self.frame_default_output_dir.resolve():
                 self.frame_output_is_default = False
                 return
+        start, end = self._frame_output_range_seconds()
+        crop = self._frame_crop_region_from_ui()
         if self._frame_is_click_keyframe_mode():
-            output_dir = video_path.parent / "analysis_output"
+            mode = "click"
+        elif self.frame_dense_enabled_var.get():
+            mode = "dense"
         else:
-            start, end = self._frame_output_range_seconds()
-            output_dir = default_output_dir(video_path, video_path.parent, start_seconds=start, end_seconds=end)
+            mode = "interval"
+        output_dir = default_output_dir(
+            video_path,
+            video_path.parent / FRAME_EXPORT_DIR_NAME,
+            start_seconds=start,
+            end_seconds=end,
+            mode=mode,
+            crop=crop,
+        )
         self.frame_default_output_dir = output_dir
         self.frame_output_dir = output_dir
         self.frame_output_is_default = True
@@ -1502,6 +1660,83 @@ class ScreenMouseRecorderApp:
                 row=2, column=1, sticky="w", padx=(0, 8), pady=(3, 8)
             )
 
+    def sync_frame_crop_preview_controls(self) -> None:
+        duration = self._frame_crop_preview_duration()
+        enabled = duration > 0
+        if self.frame_crop_time_scale is not None:
+            self.frame_crop_time_scale.configure(from_=0.0, to=max(1.0, duration), state="normal" if enabled else "disabled")
+        for button in self.frame_crop_preview_buttons:
+            button.configure(state="normal" if enabled else "disabled")
+        self._set_frame_crop_preview_seconds(self.frame_crop_preview_seconds_var.get(), reload=False)
+
+    def set_frame_crop_preview_fraction(self, fraction: float) -> None:
+        duration = self._frame_crop_preview_duration()
+        if duration <= 0:
+            return
+        fraction = max(0.0, min(1.0, float(fraction)))
+        self._cancel_frame_crop_preview_reload()
+        self._set_frame_crop_preview_seconds(duration * fraction, reload=True)
+
+    def on_frame_crop_preview_scale(self, value: str) -> None:
+        if self.frame_crop_preview_controls_updating:
+            return
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            seconds = 0.0
+        self._set_frame_crop_preview_seconds(seconds, reload=False)
+        self._schedule_frame_crop_preview_reload()
+
+    def _frame_crop_preview_duration(self) -> float:
+        if self.frame_video_info is None:
+            return 0.0
+        return max(0.0, float(self.frame_video_info.duration_seconds))
+
+    def _clamp_frame_crop_preview_seconds(self, seconds: float) -> float:
+        duration = self._frame_crop_preview_duration()
+        if duration <= 0:
+            return max(0.0, float(seconds))
+        return max(0.0, min(duration, float(seconds)))
+
+    def _set_frame_crop_preview_seconds(self, seconds: float, *, reload: bool) -> None:
+        seconds = self._clamp_frame_crop_preview_seconds(seconds)
+        self.frame_crop_preview_controls_updating = True
+        try:
+            self.frame_crop_preview_seconds_var.set(seconds)
+        finally:
+            self.frame_crop_preview_controls_updating = False
+        self._update_frame_crop_preview_time_label(seconds)
+        if reload:
+            self.load_frame_crop_preview(show_message=False)
+
+    def _update_frame_crop_preview_time_label(self, seconds: float | None = None) -> None:
+        if seconds is None:
+            seconds = self._clamp_frame_crop_preview_seconds(self.frame_crop_preview_seconds_var.get())
+        duration = self._frame_crop_preview_duration()
+        if duration <= 0:
+            self.frame_crop_preview_time_var.set("00:00:00 / --")
+            return
+        self.frame_crop_preview_time_var.set(f"{format_timecode(seconds)} / {format_timecode(duration)}")
+
+    def _schedule_frame_crop_preview_reload(self) -> None:
+        if self.frame_source_path is None:
+            return
+        self._cancel_frame_crop_preview_reload()
+        self.frame_crop_preview_after_id = self.root.after(300, self._load_scheduled_frame_crop_preview)
+
+    def _load_scheduled_frame_crop_preview(self) -> None:
+        self.frame_crop_preview_after_id = None
+        self.load_frame_crop_preview(show_message=False)
+
+    def _cancel_frame_crop_preview_reload(self) -> None:
+        if self.frame_crop_preview_after_id is None:
+            return
+        try:
+            self.root.after_cancel(self.frame_crop_preview_after_id)
+        except tk.TclError:
+            pass
+        self.frame_crop_preview_after_id = None
+
     def bind_frame_crop_canvas(self) -> None:
         canvas = self.frame_crop_canvas
         if canvas is None:
@@ -1522,7 +1757,8 @@ class ScreenMouseRecorderApp:
             if show_message:
                 messagebox.showinfo("需要选择视频", "请先选择一个视频。")
             return
-        seconds = parse_timecode(self.frame_start_var.get()) or 0.0
+        seconds = self._clamp_frame_crop_preview_seconds(self.frame_crop_preview_seconds_var.get())
+        self._set_frame_crop_preview_seconds(seconds, reload=False)
         self.frame_status_var.set("读取裁剪预览中...")
 
         def worker() -> None:
@@ -1540,7 +1776,16 @@ class ScreenMouseRecorderApp:
         if error is not None:
             self.frame_status_var.set(f"裁剪预览读取失败：{error}")
             if show_message:
-                messagebox.showerror("裁剪预览失败", str(error))
+                self._show_error_report(
+                    "裁剪预览失败",
+                    "frame_preview",
+                    error,
+                    {
+                        "video_path": self.frame_source_path,
+                        "preview_seconds": self.frame_crop_preview_seconds_var.get(),
+                        "ffmpeg_path": self.config.ffmpeg_path,
+                    },
+                )
             return
         if image is None:
             return
@@ -1551,13 +1796,37 @@ class ScreenMouseRecorderApp:
         self._render_frame_crop_preview()
 
     def reset_frame_crop(self) -> None:
-        self.frame_crop_enabled_var.set(False)
-        self.frame_crop_x_var.set("0")
-        self.frame_crop_y_var.set("0")
-        self.frame_crop_w_var.set("")
-        self.frame_crop_h_var.set("")
+        self.frame_crop_value_trace_updating = True
+        try:
+            self.frame_crop_enabled_var.set(False)
+            self.frame_crop_x_var.set("0")
+            self.frame_crop_y_var.set("0")
+            self.frame_crop_w_var.set("")
+            self.frame_crop_h_var.set("")
+        finally:
+            self.frame_crop_value_trace_updating = False
         self._render_frame_crop_preview()
         self._on_config_changed()
+
+    def _on_frame_crop_values_changed(self) -> None:
+        if self.frame_crop_value_trace_updating:
+            return
+        image = self.frame_crop_preview_original
+        max_width = image.width if image is not None else 100000
+        max_height = image.height if image is not None else 100000
+        crop_width = self._safe_int_string(self.frame_crop_w_var, 0, 0, max_width)
+        crop_height = self._safe_int_string(self.frame_crop_h_var, 0, 0, max_height)
+        if crop_width > 0 and crop_height > 0 and not self.frame_crop_enabled_var.get():
+            self.frame_crop_value_trace_updating = True
+            try:
+                self.frame_crop_enabled_var.set(True)
+            finally:
+                self.frame_crop_value_trace_updating = False
+        self._on_frame_crop_option_changed()
+
+    def _on_frame_crop_option_changed(self) -> None:
+        self._render_frame_crop_preview()
+        self._refresh_frame_default_output_dir()
 
     def _clear_frame_crop_preview(self) -> None:
         if self.frame_crop_preview_original is not None:
@@ -1689,21 +1958,13 @@ class ScreenMouseRecorderApp:
             self.frame_video_info = info
             if self._frame_is_click_keyframe_mode():
                 config = self._build_click_keyframe_config()
-                events = load_click_keyframe_events(config)
-                selected, skipped = select_click_keyframes(events, config)
-                per_sheet = max(1, config.sheet_cols * config.sheet_rows)
-                sheet_count = (len(selected) + per_sheet - 1) // per_sheet if selected else 0
+                estimate = estimate_click_keyframe_sampling(config)
                 self.frame_duration_var.set(format_timecode(info.duration_seconds))
                 self.frame_resolution_var.set(f"{info.width}x{info.height}")
-                self.frame_count_var.set(str(len(selected)))
-                self.frame_sheet_count_var.set(str(sheet_count))
-                self.frame_eta_var.set(f"约 {max(1, len(selected)) * 0.3:.0f} 秒")
-                self.frame_status_var.set(
-                    f"识别点击事件 {len(events)} 个，实验去重预估保留 {len(selected)} 张；"
-                    f"聚簇 {config.time_dedupe_seconds:.1f}s / {config.distance_dedupe_px:.0f}px，"
-                    f"生成时复核画面差异。"
-                )
-                self.frame_status_var.set(f"识别点击事件 {len(events)} 个，智能去重预估保留 {len(selected)} 帧。")
+                self.frame_count_var.set(str(estimate.events_kept))
+                self.frame_sheet_count_var.set(str(estimate.sheet_count))
+                self.frame_eta_var.set(f"约 {estimate.estimated_processing_seconds:.0f} 秒")
+                self.frame_status_var.set(f"识别点击事件 {estimate.events_total} 个，智能去重预估保留 {estimate.events_kept} 帧。")
                 self._sync_frame_config_from_ui()
                 self._save_config()
                 return
@@ -1712,7 +1973,18 @@ class ScreenMouseRecorderApp:
         except Exception as exc:
             self.frame_status_var.set(f"预估失败：{exc}")
             if show_message:
-                messagebox.showerror("预估失败", str(exc))
+                self._show_error_report(
+                    "预估失败",
+                    "frame_estimate",
+                    exc,
+                    {
+                        "video_path": self.frame_source_path,
+                        "mode": self.frame_mode_var.get(),
+                        "start": self.frame_start_var.get(),
+                        "end": self.frame_end_var.get(),
+                        "output_dir": self.frame_output_var.get(),
+                    },
+                )
             return
         self.frame_duration_var.set(format_timecode(info.duration_seconds))
         self.frame_resolution_var.set(f"{info.width}x{info.height}")
@@ -1734,46 +2006,54 @@ class ScreenMouseRecorderApp:
                 self._refresh_frame_default_output_dir(force=True)
             info = self.frame_video_info or probe_video(self._frame_video_path(), self.config.ffmpeg_path)
             if self._frame_is_click_keyframe_mode():
-                click_config = self._build_click_keyframe_config()
-                events = load_click_keyframe_events(click_config)
-                selected, _skipped = select_click_keyframes(events, click_config)
-                per_sheet = max(1, click_config.sheet_cols * click_config.sheet_rows)
-                sheet_count = (len(selected) + per_sheet - 1) // per_sheet if selected else 0
-                config = click_config
-                estimate = None
+                config = self._build_click_keyframe_config()
+                click_estimate = estimate_click_keyframe_sampling(config)
+                interval_estimate = None
             else:
                 config = self._build_frame_sampler_config()
-                estimate = estimate_sampling(config, info)
-                selected = []
-                sheet_count = estimate.sheet_count
+                interval_estimate = estimate_sampling(config, info)
+                click_estimate = None
         except Exception as exc:
-            messagebox.showerror("无法开始", str(exc))
+            self._show_error_report(
+                "无法开始",
+                "frame_estimate",
+                exc,
+                {
+                    "video_path": self.frame_source_path,
+                    "mode": self.frame_mode_var.get(),
+                    "output_dir": self.frame_output_var.get(),
+                },
+            )
             return
         self.frame_video_info = info
         self._set_frame_running(True)
-        if estimate is not None:
-            self.frame_count_var.set(str(estimate.frame_count))
-            self.frame_sheet_count_var.set(str(estimate.sheet_count))
-            self.frame_eta_var.set(f"约 {estimate.estimated_processing_seconds:.0f} 秒")
+        if interval_estimate is not None:
+            self.frame_count_var.set(str(interval_estimate.frame_count))
+            self.frame_sheet_count_var.set(str(interval_estimate.sheet_count))
+            self.frame_eta_var.set(f"约 {interval_estimate.estimated_processing_seconds:.0f} 秒")
         else:
-            self.frame_count_var.set(str(len(selected)))
-            self.frame_sheet_count_var.set(str(sheet_count))
-            self.frame_eta_var.set(f"约 {max(1, len(selected)) * 0.3:.0f} 秒")
+            assert click_estimate is not None
+            self.frame_count_var.set(str(click_estimate.events_kept))
+            self.frame_sheet_count_var.set(str(click_estimate.sheet_count))
+            self.frame_eta_var.set(f"约 {click_estimate.estimated_processing_seconds:.0f} 秒")
 
         def progress(done: int, total: int, message: str) -> None:
-            self.root.after(0, lambda: self._update_frame_progress(done, total, message))
+            try:
+                self.root.after(0, lambda: self._update_frame_progress(done, total, message))
+            except tk.TclError:
+                pass
 
         def worker() -> None:
             result = None
             error: Exception | None = None
             try:
-                if isinstance(config, ClickKeyframeConfig):
-                    result = generate_click_keyframe_sheets(config, self.config.ffmpeg_path, progress)
-                else:
-                    result = sample_video_to_sheets(config, self.config.ffmpeg_path, progress)
+                result = run_frame_export(config, self.config.ffmpeg_path, progress)
             except Exception as exc:
                 error = exc
-            self.root.after(0, lambda: self._on_frame_sampling_done(result, error))
+            try:
+                self.root.after(0, lambda: self._on_frame_sampling_done(result, error))
+            except tk.TclError:
+                pass
 
         threading.Thread(target=worker, name="frame-sampler", daemon=True).start()
 
@@ -1784,37 +2064,44 @@ class ScreenMouseRecorderApp:
         self.frame_generate_button.configure(state=state)
         if running:
             self.frame_progress_started_ms = monotonic_ms()
-            self.frame_progress_percent_var.set(0)
-            self.frame_progress_var.set("准备生成...")
-            self.frame_remaining_var.set("预计剩余 --")
+            progress = starting_progress()
+            self.frame_progress_percent_var.set(progress.percent)
+            self.frame_progress_var.set(progress.progress_text)
+            self.frame_remaining_var.set(progress.remaining_text)
         else:
             self.frame_progress_started_ms = None
         self.frame_status_var.set("生成中..." if running else "就绪")
 
     def _update_frame_progress(self, done: int, total: int, message: str) -> None:
-        if total <= 0:
-            self.frame_progress_var.set(message)
-            self.frame_remaining_var.set("")
-            return
-        done = max(0, min(done, total))
-        self.frame_progress_percent_var.set(done / total * 100)
-        self.frame_progress_var.set(f"{done}/{total} · {message}")
-        started = self.frame_progress_started_ms
-        if started is None or done <= 0:
-            self.frame_remaining_var.set("预计剩余 --")
-            return
-        elapsed_seconds = max(0.0, (monotonic_ms() - started) / 1000)
-        remaining_seconds = elapsed_seconds / done * max(0, total - done)
-        self.frame_remaining_var.set(f"预计剩余 {self._format_duration_seconds(remaining_seconds)}")
+        progress = update_progress(
+            done,
+            total,
+            message,
+            started_ms=self.frame_progress_started_ms,
+            now_ms=monotonic_ms(),
+        )
+        self.frame_progress_percent_var.set(progress.percent)
+        self.frame_progress_var.set(progress.progress_text)
+        self.frame_remaining_var.set(progress.remaining_text)
 
     def _on_frame_sampling_done(self, result: Any, error: Exception | None) -> None:
         self._set_frame_running(False)
         if error is not None:
             self.frame_status_var.set(f"生成失败：{error}")
-            self.frame_progress_var.set("")
-            self.frame_progress_percent_var.set(0)
-            self.frame_remaining_var.set("生成失败")
-            messagebox.showerror("生成失败", str(error))
+            progress = failed_progress()
+            self.frame_progress_var.set(progress.progress_text)
+            self.frame_progress_percent_var.set(progress.percent)
+            self.frame_remaining_var.set(progress.remaining_text)
+            self._show_error_report(
+                "生成失败",
+                "frame_export",
+                error,
+                {
+                    "video_path": self.frame_source_path,
+                    "mode": self.frame_mode_var.get(),
+                    "output_dir": self.frame_output_var.get(),
+                },
+            )
             return
         if result is None:
             self.frame_status_var.set("生成失败")
@@ -1833,9 +2120,10 @@ class ScreenMouseRecorderApp:
             self.frame_status_var.set(
                 f"已生成 {len(result.sheet_paths)} 张合成图，索引和预览页已写入输出目录。"
             )
-        self.frame_progress_percent_var.set(100)
-        self.frame_progress_var.set("完成")
-        self.frame_remaining_var.set("完成")
+        progress = completed_progress()
+        self.frame_progress_percent_var.set(progress.percent)
+        self.frame_progress_var.set(progress.progress_text)
+        self.frame_remaining_var.set(progress.remaining_text)
 
     def open_frame_output(self) -> None:
         path = self.frame_output_dir or Path(self.frame_output_var.get() or "")
@@ -1863,46 +2151,38 @@ class ScreenMouseRecorderApp:
         if not str(output_dir):
             raise ValueError("请设置输出目录。")
 
-        start = parse_timecode(self.frame_start_var.get()) or 0.0
-        end = parse_timecode(self.frame_end_var.get())
-        interval = self._safe_float_string(self.frame_interval_var, 10.0, 0.1, 3600.0)
-        cols = self._safe_int_string(self.frame_cols_var, 5, 1, 12)
-        rows = self._safe_int_string(self.frame_rows_var, 6, 1, 12)
-        thumb_width = self._safe_int_string(self.frame_thumb_width_var, 360, 120, 1600)
-        quality, output_format = self._frame_quality_settings()
+        return build_frame_sampler_config_from_state(
+            FrameSamplerFormState(
+                video_path=video_path,
+                output_dir=output_dir,
+                start_text=self.frame_start_var.get(),
+                end_text=self.frame_end_var.get(),
+                interval_text=self.frame_interval_var.get(),
+                cols_text=self.frame_cols_var.get(),
+                rows_text=self.frame_rows_var.get(),
+                thumb_width_text=self.frame_thumb_width_var.get(),
+                quality_preset=self.frame_quality_preset_var.get(),
+                show_timestamp=self.frame_show_timestamp_var.get(),
+                show_index=self.frame_show_index_var.get(),
+                crop_enabled=self.frame_crop_enabled_var.get(),
+                crop_x_text=self.frame_crop_x_var.get(),
+                crop_y_text=self.frame_crop_y_var.get(),
+                crop_width_text=self.frame_crop_w_var.get(),
+                crop_height_text=self.frame_crop_h_var.get(),
+                dense_rows=self._frame_dense_row_values(),
+                click_events_path=self.frame_click_events_path,
+                draw_click_markers=self.frame_draw_click_markers_var.get(),
+                click_match_window_seconds=float(self.config.frame_sampler_click_match_window_seconds or 0.5),
+            )
+        )
 
-        crop = None
-        if self.frame_crop_enabled_var.get():
-            crop_width = self._safe_int_string(self.frame_crop_w_var, 0, 0, 100000)
-            crop_height = self._safe_int_string(self.frame_crop_h_var, 0, 0, 100000)
-            if crop_width > 0 and crop_height > 0:
-                crop = CropRegion(
-                    x=self._safe_int_string(self.frame_crop_x_var, 0, 0, 100000),
-                    y=self._safe_int_string(self.frame_crop_y_var, 0, 0, 100000),
-                    width=crop_width,
-                    height=crop_height,
-                )
-
-        dense_ranges = self._collect_frame_dense_ranges()
-
-        return FrameSamplerConfig(
-            video_path=video_path,
-            output_dir=output_dir,
-            start_seconds=start,
-            end_seconds=end,
-            interval_seconds=interval,
-            sheet_cols=cols,
-            sheet_rows=rows,
-            thumb_width=thumb_width,
-            jpeg_quality=quality,
-            output_format=output_format,
-            show_timestamp=self.frame_show_timestamp_var.get(),
-            show_index=self.frame_show_index_var.get(),
-            crop=crop,
-            dense_ranges=dense_ranges,
-            click_events_path=self.frame_click_events_path,
-            draw_click_markers=self.frame_draw_click_markers_var.get(),
-            click_match_window_seconds=max(0.1, float(self.config.frame_sampler_click_match_window_seconds or 0.5)),
+    def _frame_crop_region_from_ui(self) -> CropRegion | None:
+        return crop_region_from_values(
+            self.frame_crop_enabled_var.get(),
+            self.frame_crop_x_var.get(),
+            self.frame_crop_y_var.get(),
+            self.frame_crop_w_var.get(),
+            self.frame_crop_h_var.get(),
         )
 
     def _build_click_keyframe_config(self) -> ClickKeyframeConfig:
@@ -1913,54 +2193,39 @@ class ScreenMouseRecorderApp:
         output_dir = Path(self.frame_output_var.get().strip() or "").resolve()
         if not str(output_dir):
             raise ValueError("请设置输出目录。")
-        return ClickKeyframeConfig(
-            video_path=video_path,
-            events_path=events_path.resolve(),
-            output_dir=output_dir,
-            max_frames=self._safe_int_string(self.frame_keyframe_max_var, 0, 0, 100000),
-            sheet_cols=self._safe_int_string(self.frame_cols_var, 5, 1, 12),
-            sheet_rows=self._safe_int_string(self.frame_rows_var, 6, 1, 12),
-            thumb_width=self._safe_int_string(self.frame_thumb_width_var, 360, 120, 1600),
-            time_dedupe_seconds=self._safe_int_string(self.frame_keyframe_time_dedupe_var, 1500, 0, 10000) / 1000,
-            distance_dedupe_px=self._safe_int_string(self.frame_keyframe_distance_dedupe_var, 80, 0, 1000),
-            visual_change_threshold=self._safe_int_string(self.frame_keyframe_visual_threshold_var, 22, 0, 100) / 100,
-            show_timestamp=self.frame_show_timestamp_var.get(),
-            show_index=self.frame_show_index_var.get(),
-            draw_click_markers=self.frame_draw_click_markers_var.get(),
+        return build_click_keyframe_config_from_state(
+            ClickKeyframeFormState(
+                video_path=video_path,
+                events_path=events_path,
+                output_dir=output_dir,
+                max_frames_text=self.frame_keyframe_max_var.get(),
+                cols_text=self.frame_cols_var.get(),
+                rows_text=self.frame_rows_var.get(),
+                thumb_width_text=self.frame_thumb_width_var.get(),
+                time_dedupe_ms_text=self.frame_keyframe_time_dedupe_var.get(),
+                distance_dedupe_px_text=self.frame_keyframe_distance_dedupe_var.get(),
+                visual_threshold_percent_text=self.frame_keyframe_visual_threshold_var.get(),
+                show_timestamp=self.frame_show_timestamp_var.get(),
+                show_index=self.frame_show_index_var.get(),
+                draw_click_markers=self.frame_draw_click_markers_var.get(),
+            )
         )
 
     def _frame_quality_settings(self) -> tuple[int, str]:
-        preset = self.frame_quality_preset_var.get().strip()
-        if preset == "低":
-            return 65, "jpg"
-        if preset == "中":
-            return 80, "jpg"
-        if preset == "无损":
-            return 100, "png"
-        return 90, "jpg"
+        return quality_settings(self.frame_quality_preset_var.get())
 
     def _collect_frame_dense_ranges(self) -> list[DenseRange]:
-        dense_ranges: list[DenseRange] = []
-        for index, row in enumerate(self.frame_dense_ranges, start=1):
-            start_text = row["start"].get().strip()
-            end_text = row["end"].get().strip()
-            interval_text = row["interval"].get().strip()
-            if not start_text and not end_text:
-                continue
-            if not start_text or not end_text:
-                raise ValueError(f"关键段第 {index} 行需要同时填写开始和结束时间。")
-            start = parse_timecode(start_text)
-            end = parse_timecode(end_text)
-            if start is None or end is None:
-                raise ValueError(f"关键段第 {index} 行时间格式不正确。")
-            if end <= start:
-                raise ValueError(f"关键段第 {index} 行的结束时间必须大于开始时间。")
-            try:
-                interval = float(interval_text or "2")
-            except ValueError as exc:
-                raise ValueError(f"关键段第 {index} 行的间隔秒必须是数字。") from exc
-            dense_ranges.append(DenseRange(start, end, max(0.1, min(3600.0, interval))))
-        return dense_ranges
+        return collect_dense_ranges(self._frame_dense_row_values())
+
+    def _frame_dense_row_values(self) -> list[dict[str, str]]:
+        return [
+            {
+                "start": row["start"].get().strip(),
+                "end": row["end"].get().strip(),
+                "interval": row["interval"].get().strip(),
+            }
+            for row in self.frame_dense_ranges
+        ]
 
     def _sync_frame_config_from_ui(self) -> None:
         output_text = self.frame_output_var.get().strip()
@@ -1969,9 +2234,9 @@ class ScreenMouseRecorderApp:
             if output_path.is_absolute():
                 self.config.frame_sampler_output_root = str(output_path.parent)
             else:
-                self.config.frame_sampler_output_root = output_text or "frame_sheets"
+                self.config.frame_sampler_output_root = output_text or FRAME_EXPORT_DIR_NAME
         except OSError:
-            self.config.frame_sampler_output_root = "frame_sheets"
+            self.config.frame_sampler_output_root = FRAME_EXPORT_DIR_NAME
         self.config.frame_sampler_mode = "click_keyframes" if self._frame_is_click_keyframe_mode() else "interval"
         self.config.frame_sampler_start = self.frame_start_var.get().strip()
         self.config.frame_sampler_end = self.frame_end_var.get().strip()
@@ -1996,12 +2261,12 @@ class ScreenMouseRecorderApp:
         self.config.frame_sampler_show_index = self.frame_show_index_var.get()
         dense_rows = [
             {
-                "start": row["start"].get().strip(),
-                "end": row["end"].get().strip(),
-                "interval": row["interval"].get().strip() or "2",
+                "start": row["start"],
+                "end": row["end"],
+                "interval": row["interval"] or "2",
             }
-            for row in self.frame_dense_ranges
-            if row["start"].get().strip() or row["end"].get().strip()
+            for row in self._frame_dense_row_values()
+            if row["start"] or row["end"]
         ]
         self.config.frame_sampler_dense_enabled = bool(dense_rows)
         self.config.frame_sampler_dense_ranges = dense_rows
@@ -2068,9 +2333,7 @@ class ScreenMouseRecorderApp:
         self.config.startup_countdown_seconds = self._safe_int(self.startup_countdown_var, 3, 0, 10)
 
     def _build_session_id(self) -> str:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        custom_name = self._sanitize_session_name(self.session_name_var.get())
-        return f"{timestamp}_{custom_name}" if custom_name else timestamp
+        return build_session_id(self.session_name_var.get())
 
     def _next_segment_path(self) -> Path:
         assert self.storage is not None
@@ -2079,10 +2342,7 @@ class ScreenMouseRecorderApp:
 
     @staticmethod
     def _sanitize_session_name(value: str) -> str:
-        value = value.strip()
-        value = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", value)
-        value = value.strip("._-")
-        return value[:60]
+        return sanitize_session_name(value)
 
     @staticmethod
     def _compact_text(value: str, max_chars: int) -> str:
@@ -2258,23 +2518,18 @@ class ScreenMouseRecorderApp:
             value = default
         return max(minimum, min(maximum, value))
 
-    @staticmethod
-    def _format_duration_seconds(seconds: float) -> str:
-        seconds = max(0, int(round(seconds)))
-        minutes, secs = divmod(seconds, 60)
-        hours, minutes = divmod(minutes, 60)
-        if hours:
-            return f"{hours}小时{minutes:02d}分"
-        if minutes:
-            return f"{minutes}分{secs:02d}秒"
-        return f"{secs}秒"
-
 
 def main(base_dir: Path | None = None) -> None:
     if base_dir is None:
         base_dir = Path(__file__).resolve().parents[2]
     root = tk.Tk()
     ScreenMouseRecorderApp(root, base_dir)
+    root.update_idletasks()
+    root.deiconify()
+    root.lift()
+    root.focus_force()
+    root.attributes("-topmost", True)
+    root.after(1200, lambda: root.attributes("-topmost", False))
     root.mainloop()
 
 

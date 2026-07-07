@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
 import json
 from pathlib import Path
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 import zipfile
 
 from openpyxl import load_workbook
@@ -19,36 +21,108 @@ from screen_mouse_recorder.app import ScreenMouseRecorderApp
 from screen_mouse_recorder.analysis import generate_behavior_report
 from screen_mouse_recorder.calibration import build_calibration_result
 from screen_mouse_recorder.config import AppConfig
+from screen_mouse_recorder.diagnostics.error_report import (
+    build_error_report,
+    format_error_dialog_message,
+    write_error_report,
+)
+from screen_mouse_recorder.diagnostics.service import ErrorReporter
 from screen_mouse_recorder.frame_sampler import (
     ClickKeyframeConfig,
     ClickMarker,
     CropRegion,
     DenseRange,
     FrameSamplerConfig,
+    FramePlanEntry,
     VideoInfo,
     _add_silent_gap_keyframes,
+    _compose_sheet,
     _nearest_click_marker,
     _prepare_frame_image,
     build_click_keyframe_plan,
     build_frame_plan,
     default_output_dir,
+    estimate_click_keyframe_sampling,
     estimate_sampling,
     format_timecode,
     load_click_keyframe_events,
     load_click_markers,
     parse_timecode,
+    run_frame_export,
     select_click_keyframes,
     select_click_keyframes_with_stats,
+)
+from screen_mouse_recorder.frame_export.ui_state import (
+    ClickKeyframeFormState,
+    FrameSamplerFormState,
+    build_click_keyframe_config_from_state,
+    build_frame_sampler_config_from_state,
+    collect_dense_ranges,
+)
+from screen_mouse_recorder.frame_export.progress import (
+    completed_progress,
+    failed_progress,
+    format_duration_seconds,
+    starting_progress,
+    update_progress,
 )
 from PIL import Image
 from screen_mouse_recorder.models import Region, TimingContext
 from screen_mouse_recorder.mouse_logger import MouseActivityLogger
+from screen_mouse_recorder.naming import build_session_id, default_report_output_dir, sanitize_session_name
 from screen_mouse_recorder.postprocess import generate_summary
+from screen_mouse_recorder.reporting.service import make_behavior_report_job
 from screen_mouse_recorder.storage import JsonlWriter, SessionStorage
+from screen_mouse_recorder.updater import check_for_updates
 from screen_mouse_recorder.video_recorder import FFmpegRecorder
 
 
 class CoreSmokeTests(unittest.TestCase):
+    def test_update_check_ignores_non_git_folder(self) -> None:
+        with TemporaryDirectory() as directory:
+            status = check_for_updates(Path(directory))
+
+        self.assertFalse(status.available)
+        self.assertIsNone(status.git_root)
+
+    def test_error_report_writes_code_explanation_and_context(self) -> None:
+        with TemporaryDirectory() as directory:
+            report = build_error_report(
+                "frame_export",
+                RuntimeError("disk full"),
+                context={"output_dir": Path(directory) / "frame_exports"},
+            )
+            json_path, txt_path = write_error_report(Path(directory), report)
+
+            dialog = format_error_dialog_message(report, txt_path)
+
+            self.assertEqual(report.code, "FRM-EXPORT-001")
+            self.assertTrue(json_path.exists())
+            self.assertTrue(txt_path.exists())
+            self.assertIn("\u9519\u8bef\u4ee3\u7801\uff1aFRM-EXPORT-001", dialog)
+            self.assertIn("\u62bd\u5e27\u62fc\u56fe\u5931\u8d25", txt_path.read_text(encoding="utf-8"))
+            self.assertIn("output_dir", json_path.read_text(encoding="utf-8"))
+
+    def test_error_report_has_summary_regenerate_code(self) -> None:
+        report = build_error_report("summary_regenerate", RuntimeError("bad rows"))
+
+        self.assertEqual(report.code, "SUM-REGEN-001")
+        self.assertIn("\u6458\u8981\u8868\u683c", report.title)
+
+    def test_error_reporter_service_writes_report_files(self) -> None:
+        with TemporaryDirectory() as directory:
+            result = ErrorReporter(Path(directory)).create(
+                "frame_export",
+                RuntimeError("disk full"),
+                {"output_dir": Path(directory) / "frame_exports"},
+            )
+
+            self.assertEqual(result.report.code, "FRM-EXPORT-001")
+            self.assertIsNotNone(result.json_path)
+            self.assertIsNotNone(result.txt_path)
+            self.assertTrue(result.json_path.exists() if result.json_path else False)
+            self.assertTrue(result.txt_path.exists() if result.txt_path else False)
+
     def test_region_mapping(self) -> None:
         region = Region(screen_x=100, screen_y=200, width=400, height=300)
         mapped = region.map_point(300, 350)
@@ -80,6 +154,33 @@ class CoreSmokeTests(unittest.TestCase):
     def test_session_name_sanitizer(self) -> None:
         self.assertEqual(ScreenMouseRecorderApp._sanitize_session_name(" demo / round:1 "), "demo_round_1")
         self.assertEqual(ScreenMouseRecorderApp._sanitize_session_name("中文 任务"), "中文_任务")
+        self.assertEqual(sanitize_session_name(" demo / round:1 "), "demo_round_1")
+
+    def test_build_session_id_uses_rec_prefix_and_safe_suffix(self) -> None:
+        session_id = build_session_id("中文 任务", now=datetime(2026, 7, 7, 20, 30, 5))
+
+        self.assertEqual(session_id, "rec_20260707_203005_中文_任务")
+
+    def test_default_report_output_dir_prefers_new_name_but_reads_legacy(self) -> None:
+        with TemporaryDirectory() as directory:
+            session_dir = Path(directory) / "rec_20260707_203005"
+            session_dir.mkdir()
+            self.assertEqual(default_report_output_dir(session_dir), session_dir / "auto_report")
+
+            legacy_dir = session_dir / "analysis_output"
+            legacy_dir.mkdir()
+            self.assertEqual(default_report_output_dir(session_dir), legacy_dir)
+
+    def test_behavior_report_job_uses_default_output_and_ffmpeg_path(self) -> None:
+        with TemporaryDirectory() as directory:
+            session_dir = Path(directory) / "rec_20260707_203005"
+            session_dir.mkdir()
+
+            job = make_behavior_report_job(session_dir, ffmpeg_path="ffmpeg-test")
+
+        self.assertEqual(job.source_path, session_dir.resolve())
+        self.assertEqual(job.output_dir, (session_dir / "auto_report").resolve())
+        self.assertEqual(job.ffmpeg_path, "ffmpeg-test")
 
     def test_config_includes_recording_status_banner_toggle(self) -> None:
         config = AppConfig(show_recording_status_banner=False)
@@ -95,6 +196,7 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(config.frame_sampler_rows, 6)
         self.assertTrue(config.frame_sampler_show_timestamp)
         self.assertEqual(config.frame_sampler_mode, "interval")
+        self.assertEqual(config.frame_sampler_output_root, "frame_exports")
         self.assertEqual(config.frame_sampler_keyframe_max_frames, 0)
         self.assertEqual(config.frame_sampler_keyframe_time_dedupe_ms, 1500)
         self.assertEqual(config.frame_sampler_keyframe_distance_dedupe_px, 80)
@@ -106,6 +208,74 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(parse_timecode("02:30"), 150)
         self.assertEqual(format_timecode(62.5), "00:01:02.500")
 
+    def test_frame_sampler_ui_state_builds_interval_config(self) -> None:
+        config = build_frame_sampler_config_from_state(
+            FrameSamplerFormState(
+                video_path=Path("video.mp4"),
+                output_dir=Path("out"),
+                start_text="00:01",
+                end_text="00:10",
+                interval_text="2.5",
+                cols_text="20",
+                rows_text="bad",
+                thumb_width_text="80",
+                quality_preset="\u65e0\u635f",
+                crop_enabled=True,
+                crop_x_text="10",
+                crop_y_text="20",
+                crop_width_text="300",
+                crop_height_text="120",
+                dense_rows=[{"start": "00:03", "end": "00:05", "interval": "0.05"}],
+                click_match_window_seconds=0.05,
+            )
+        )
+
+        self.assertEqual(config.start_seconds, 1)
+        self.assertEqual(config.end_seconds, 10)
+        self.assertEqual(config.sheet_cols, 12)
+        self.assertEqual(config.sheet_rows, 6)
+        self.assertEqual(config.thumb_width, 120)
+        self.assertEqual(config.output_format, "png")
+        self.assertEqual(config.crop, CropRegion(10, 20, 300, 120))
+        self.assertEqual(config.dense_ranges[0], DenseRange(3, 5, 0.1))
+        self.assertEqual(config.click_match_window_seconds, 0.1)
+
+    def test_frame_sampler_ui_state_builds_click_keyframe_config(self) -> None:
+        config = build_click_keyframe_config_from_state(
+            ClickKeyframeFormState(
+                video_path=Path("video.mp4"),
+                events_path=Path("mouse_events.jsonl"),
+                output_dir=Path("out"),
+                max_frames_text="150",
+                time_dedupe_ms_text="1200",
+                distance_dedupe_px_text="60",
+                visual_threshold_percent_text="35",
+            )
+        )
+
+        self.assertEqual(config.max_frames, 150)
+        self.assertEqual(config.time_dedupe_seconds, 1.2)
+        self.assertEqual(config.distance_dedupe_px, 60)
+        self.assertEqual(config.visual_change_threshold, 0.35)
+
+    def test_frame_sampler_ui_state_rejects_incomplete_dense_range(self) -> None:
+        with self.assertRaises(ValueError):
+            collect_dense_ranges([{"start": "00:03", "end": "", "interval": "2"}])
+
+    def test_frame_export_progress_formats_eta(self) -> None:
+        progress = update_progress(25, 100, "抽帧", started_ms=0, now_ms=10_000)
+
+        self.assertEqual(progress.percent, 25)
+        self.assertEqual(progress.progress_text, "25/100 · 抽帧")
+        self.assertEqual(progress.remaining_text, "预计剩余 30秒")
+
+    def test_frame_export_progress_handles_edge_states(self) -> None:
+        self.assertEqual(starting_progress().remaining_text, "预计剩余 --")
+        self.assertEqual(failed_progress().remaining_text, "生成失败")
+        self.assertEqual(completed_progress().percent, 100)
+        self.assertEqual(update_progress(0, 0, "准备", started_ms=None, now_ms=0).progress_text, "准备")
+        self.assertEqual(format_duration_seconds(3661), "1小时01分")
+
     def test_frame_sampler_default_output_dir_uses_parent_folder_and_range(self) -> None:
         path = default_output_dir(
             Path(r"D:\sessions\青云决\recording.mp4"),
@@ -114,13 +284,13 @@ class CoreSmokeTests(unittest.TestCase):
             end_seconds=1800,
         )
 
-        self.assertEqual(path.name, "青云决_抽帧1（000130-003000）")
+        self.assertEqual(path.name, "interval_000130-003000_full_v001")
 
     def test_frame_sampler_default_output_dir_uses_next_available_index(self) -> None:
         with TemporaryDirectory() as directory:
             folder = Path(directory) / "青云决"
             folder.mkdir()
-            (folder / "青云决_抽帧1（000130-003000）").mkdir()
+            (folder / "interval_000130-003000_full_v001").mkdir()
 
             path = default_output_dir(
                 folder / "recording.mp4",
@@ -129,7 +299,7 @@ class CoreSmokeTests(unittest.TestCase):
                 end_seconds=1800,
             )
 
-        self.assertEqual(path.name, "青云决_抽帧2（000130-003000）")
+        self.assertEqual(path.name, "interval_000130-003000_full_v002")
 
     def test_frame_sampler_plan_uses_dense_range_and_dedupes(self) -> None:
         video = VideoInfo(Path("demo.mp4"), duration_seconds=40, width=100, height=100, fps=30, file_size_bytes=1000)
@@ -239,6 +409,31 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(thumb.size, (200, 200))
         self.assertEqual(position, (50, 50))
 
+    def test_frame_sampler_labels_stay_outside_cropped_image(self) -> None:
+        thumb = Image.new("RGB", (160, 24), "red")
+        entry = FramePlanEntry(
+            index=1,
+            seconds=1.0,
+            timestamp="00:00:01",
+            is_dense=False,
+            sheet_index=1,
+            sheet_row=1,
+            sheet_col=1,
+        )
+        config = FrameSamplerConfig(
+            video_path=Path("video.mp4"),
+            output_dir=Path("out"),
+            sheet_cols=1,
+            sheet_rows=1,
+            show_timestamp=True,
+            show_index=True,
+        )
+
+        sheet = _compose_sheet([thumb], [entry], config)
+
+        self.assertEqual(sheet.getpixel((18, 64)), (255, 0, 0))
+        self.assertNotEqual(sheet.getpixel((18, 82)), (255, 0, 0))
+
     def test_click_keyframes_cluster_dedupe_keeps_head_for_short_cluster_without_visual(self) -> None:
         with TemporaryDirectory() as directory:
             events_path = Path(directory) / "mouse_events.jsonl"
@@ -336,6 +531,59 @@ class CoreSmokeTests(unittest.TestCase):
 
         self.assertEqual([event.event_id for event in selected], ["evt_1", "evt_2"])
         self.assertEqual(skipped, 2)
+
+    def test_click_keyframe_estimate_counts_selected_events_and_sheets(self) -> None:
+        with TemporaryDirectory() as directory:
+            events_path = Path(directory) / "mouse_events.jsonl"
+            events_path.write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "event_id": f"evt_{index}",
+                            "event_type": "click",
+                            "t_video_ms": 1000 + index * 100,
+                            "video_x": 10 + index,
+                            "video_y": 10,
+                        }
+                    )
+                    for index in range(5)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config = ClickKeyframeConfig(
+                video_path=Path("recording.mp4"),
+                events_path=events_path,
+                output_dir=Path(directory),
+                sheet_cols=1,
+                sheet_rows=1,
+                time_dedupe_seconds=1.0,
+                distance_dedupe_px=20,
+                cluster_tail_min_size=5,
+            )
+
+            estimate = estimate_click_keyframe_sampling(config)
+
+        self.assertEqual(estimate.events_total, 5)
+        self.assertEqual(estimate.events_kept, 2)
+        self.assertEqual(estimate.events_skipped, 3)
+        self.assertEqual(estimate.sheet_count, 2)
+
+    def test_run_frame_export_dispatches_by_config_type(self) -> None:
+        interval_config = FrameSamplerConfig(video_path=Path("video.mp4"), output_dir=Path("out"))
+        click_config = ClickKeyframeConfig(
+            video_path=Path("video.mp4"),
+            events_path=Path("mouse_events.jsonl"),
+            output_dir=Path("out"),
+        )
+
+        with patch("screen_mouse_recorder.frame_export.service.sample_video_to_sheets", return_value="interval") as interval_run:
+            self.assertEqual(run_frame_export(interval_config, "ffmpeg"), "interval")
+            interval_run.assert_called_once()
+
+        with patch("screen_mouse_recorder.frame_export.service.generate_click_keyframe_sheets", return_value="click") as click_run:
+            self.assertEqual(run_frame_export(click_config, "ffmpeg"), "click")
+            click_run.assert_called_once()
 
     def test_click_keyframes_adds_silent_gap_compensation(self) -> None:
         with TemporaryDirectory() as directory:
@@ -596,10 +844,10 @@ class CoreSmokeTests(unittest.TestCase):
 
             result = generate_behavior_report(storage.session_dir)
 
-            self.assertEqual(result.output_dir, (storage.session_dir / "analysis_output").resolve())
+            self.assertEqual(result.output_dir, (storage.session_dir / "auto_report").resolve())
             self.assertEqual(result.metrics["clicks_total"], 2)
             self.assertTrue(zipfile.is_zipfile(result.outputs["report"]))
-            self.assertEqual(result.outputs["click_keyframes"].name, "click_keyframes.png")
+            self.assertEqual(result.outputs["click_keyframes"].name, "keyframes_click_sheet.png")
             self.assertTrue(result.outputs["heatmap_circle"].exists())
             self.assertFalse((result.output_dir / "click_heatmap_true_ratio.png").exists())
             self.assertFalse((result.output_dir / "click_heatmap_square_matrix.png").exists())
@@ -617,7 +865,7 @@ class CoreSmokeTests(unittest.TestCase):
 
             result = generate_behavior_report(storage.mouse_summary_xlsx)
 
-            self.assertEqual(result.output_dir, (storage.session_dir / "analysis_output").resolve())
+            self.assertEqual(result.output_dir, (storage.session_dir / "auto_report").resolve())
             self.assertEqual(result.metrics["clicks_total"], 2)
             self.assertTrue(zipfile.is_zipfile(result.outputs["report"]))
 

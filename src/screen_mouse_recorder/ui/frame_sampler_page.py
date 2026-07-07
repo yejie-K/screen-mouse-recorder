@@ -191,24 +191,59 @@ def _build_crop_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
     app.frame_crop_canvas.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
     app.bind_frame_crop_canvas()
 
+    time_controls = ttk.Frame(panel, style="Panel.TFrame")
+    time_controls.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+    time_controls.columnconfigure(1, weight=1)
+    ttk.Label(time_controls, text="\u9884\u89c8\u5e27", style="Panel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+    app.frame_crop_time_scale = ttk.Scale(
+        time_controls,
+        from_=0.0,
+        to=1.0,
+        variable=app.frame_crop_preview_seconds_var,
+        command=app.on_frame_crop_preview_scale,
+    )
+    app.frame_crop_time_scale.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+    ttk.Label(
+        time_controls,
+        textvariable=app.frame_crop_preview_time_var,
+        style="Panel.TLabel",
+        width=18,
+        anchor="e",
+    ).grid(row=0, column=2, sticky="e")
+
+    quick_row = ttk.Frame(panel, style="Panel.TFrame")
+    quick_row.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+    quick_row.columnconfigure(5, weight=1)
+    app.frame_crop_preview_buttons = []
+    for column, (label, fraction) in enumerate((("0%", 0.0), ("25%", 0.25), ("50%", 0.5), ("75%", 0.75), ("100%", 1.0))):
+        button = ttk.Button(
+            quick_row,
+            text=label,
+            command=lambda value=fraction: app.set_frame_crop_preview_fraction(value),
+            width=6,
+        )
+        button.grid(row=0, column=column, sticky="w", padx=(0, 6))
+        app.frame_crop_preview_buttons.append(button)
+    app.sync_frame_crop_preview_controls()
+
     for column in range(4):
         panel.columnconfigure(column, weight=1)
-    _labeled_entry(panel, 1, 0, "x", app.frame_crop_x_var, "0")
-    _labeled_entry(panel, 1, 2, "y", app.frame_crop_y_var, "0")
-    _labeled_entry(panel, 2, 0, "宽", app.frame_crop_w_var, "全屏")
-    _labeled_entry(panel, 2, 2, "高", app.frame_crop_h_var, "全屏")
+    _labeled_entry(panel, 3, 0, "x", app.frame_crop_x_var, "0")
+    _labeled_entry(panel, 3, 2, "y", app.frame_crop_y_var, "0")
+    _labeled_entry(panel, 4, 0, "宽", app.frame_crop_w_var, "全屏")
+    _labeled_entry(panel, 4, 2, "高", app.frame_crop_h_var, "全屏")
 
     buttons = ttk.Frame(panel, style="Panel.TFrame")
-    buttons.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(6, 0))
+    buttons.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(6, 0))
     ttk.Button(buttons, text="重置全屏", command=app.reset_frame_crop, width=10).grid(row=0, column=0)
     tk.Label(
         panel,
-        text="选择视频后自动预览首帧；拖拽框选裁剪区域，不框选则默认全屏。",
+        text="拖动滑条切换预览帧；在上方画面拖拽框选裁剪区域。",
         bg=COLORS["panel_bg"],
         fg=COLORS["muted"],
         anchor="w",
         font=FONT_SMALL,
-    ).grid(row=4, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+    ).grid(row=6, column=0, columnspan=4, sticky="ew", pady=(8, 0))
     return panel
 
 

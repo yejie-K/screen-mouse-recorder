@@ -27,7 +27,7 @@ class AppConfig:
     calibration_click_tolerance_px: int = 80
     calibration_residual_warning_px: int = 20
     ffmpeg_path: str | None = None
-    frame_sampler_output_root: str = "frame_sheets"
+    frame_sampler_output_root: str = "frame_exports"
     frame_sampler_mode: str = "interval"
     frame_sampler_start: str = "00:00"
     frame_sampler_end: str = ""
@@ -64,6 +64,8 @@ class AppConfig:
         data = json.loads(path.read_text(encoding="utf-8-sig"))
         valid = {field.name for field in fields(cls)}
         filtered: dict[str, Any] = {key: value for key, value in data.items() if key in valid}
+        if filtered.get("frame_sampler_output_root") == "frame_sheets":
+            filtered["frame_sampler_output_root"] = "frame_exports"
         return cls(**filtered)
 
     def to_dict(self) -> dict[str, Any]:

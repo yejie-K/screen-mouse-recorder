@@ -4,7 +4,7 @@ from collections.abc import Callable
 import tkinter as tk
 from tkinter import ttk
 
-from .theme import COLORS, FONT_SMALL, FONT_SMALL_BOLD, FONT_UI, FONT_UI_BOLD
+from .theme import COLORS, FONT_SMALL, FONT_UI, FONT_UI_BOLD
 
 
 class Tooltip:
@@ -60,39 +60,6 @@ def metric_card(
     tk.Label(frame, textvariable=variable, bg=COLORS["panel_alt"], fg=COLORS["text"], font=value_font).pack(pady=(7, 0))
     tk.Label(frame, text=label, bg=COLORS["panel_alt"], fg=COLORS["muted"], font=label_font).pack(pady=(0, 6))
     return frame
-
-
-def analysis_output_row(
-    parent: tk.Widget,
-    row: int,
-    column: int,
-    title: str,
-    filename: str,
-    status_var: tk.StringVar,
-) -> tk.Label:
-    frame = tk.Frame(parent, bg=COLORS["panel_row"], highlightbackground=COLORS["border"], highlightthickness=1)
-    frame.grid(row=row, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0), pady=(0, 8))
-    frame.configure(height=60)
-    frame.grid_propagate(False)
-    frame.columnconfigure(1, weight=1)
-
-    badge = tk.Label(
-        frame,
-        textvariable=status_var,
-        bg=COLORS["panel_alt"],
-        fg=COLORS["text_secondary"],
-        width=6,
-        font=FONT_SMALL_BOLD,
-    )
-    badge.grid(row=0, column=0, rowspan=2, sticky="ns", padx=(10, 8), pady=8)
-
-    tk.Label(frame, text=title, bg=COLORS["panel_row"], fg=COLORS["text"], anchor="w", font=FONT_UI).grid(
-        row=0, column=1, sticky="ew", pady=(7, 0)
-    )
-    tk.Label(frame, text=filename, bg=COLORS["panel_row"], fg=COLORS["muted"], anchor="w", font=("Segoe UI", 8)).grid(
-        row=1, column=1, sticky="ew", pady=(0, 7)
-    )
-    return badge
 
 
 class ToggleRow(tk.Frame):

@@ -14,6 +14,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from PIL import Image, ImageDraw, ImageFont
 
 from .frame_sampler import ClickKeyframeConfig, generate_click_keyframe_sheets
+from .naming import default_report_output_dir
 from .postprocess import iter_jsonl, row_inside_video_region
 from .storage import SessionStorage
 
@@ -32,34 +33,7 @@ class BehaviorAnalysisResult:
 
 
 def default_analysis_output_dir(source_path: Path) -> Path:
-    source_path = source_path.resolve()
-    import_dir = source_path if source_path.is_dir() else source_path.parent
-    return import_dir / "analysis_output"
-
-
-def describe_analysis_source(source_path: Path) -> dict[str, Any]:
-    source_path = source_path.resolve()
-    output_dir = default_analysis_output_dir(source_path)
-    events: list[dict[str, Any]] = []
-    samples: list[dict[str, Any]] = []
-    meta: dict[str, Any] = {}
-    warnings: list[str] = []
-    try:
-        events, samples, meta, warnings = _load_source_rows(source_path)
-    except Exception as exc:
-        warnings.append(str(exc))
-    click_count = sum(1 for row in events if row.get("event_type") == "click")
-    duration_ms = _duration_ms(events, samples)
-    return {
-        "source_path": source_path,
-        "output_dir": output_dir,
-        "events_total": len(events),
-        "samples_total": len(samples),
-        "clicks_total": click_count,
-        "duration_minutes": round(duration_ms / 60_000, 3) if duration_ms else 0,
-        "has_meta": bool(meta),
-        "warnings": warnings,
-    }
+    return default_report_output_dir(source_path)
 
 
 def generate_behavior_report(
@@ -79,16 +53,16 @@ def generate_behavior_report(
     analysis = _build_analysis(events, samples, region_width, region_height)
 
     outputs = {
-        "metrics": output_dir / "summary_metrics.json",
-        "report": output_dir / "mouse_behavior_report.xlsx",
-        "timeline": output_dir / "activity_timeline.png",
-        "heatmap_circle": output_dir / "click_heatmap_circle.png",
-        "scatter": output_dir / "click_scatter.png",
-        "drag_durations": output_dir / "drag_durations.png",
-        "click_keyframes": output_dir / "click_keyframes.png",
+        "metrics": output_dir / "metrics.json",
+        "report": output_dir / "report_summary.xlsx",
+        "timeline": output_dir / "chart_activity_timeline.png",
+        "heatmap_circle": output_dir / "chart_click_heatmap.png",
+        "scatter": output_dir / "chart_click_scatter.png",
+        "drag_durations": output_dir / "chart_drag_duration.png",
+        "click_keyframes": output_dir / "keyframes_click_sheet.png",
     }
 
-    _cleanup_legacy_heatmap_outputs(output_dir)
+    _cleanup_legacy_report_outputs(output_dir)
     outputs["metrics"].write_text(
         json.dumps(analysis["metrics"], ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -110,10 +84,26 @@ def generate_behavior_report(
     )
 
 
-def _cleanup_legacy_heatmap_outputs(output_dir: Path) -> None:
-    for filename in ("click_heatmap_true_ratio.png", "click_heatmap_square_matrix.png"):
+def _cleanup_legacy_report_outputs(output_dir: Path) -> None:
+    for filename in (
+        "summary_metrics.json",
+        "mouse_behavior_report.xlsx",
+        "activity_timeline.png",
+        "click_heatmap_circle.png",
+        "click_heatmap_true_ratio.png",
+        "click_heatmap_square_matrix.png",
+        "click_scatter.png",
+        "drag_durations.png",
+        "click_keyframes.png",
+        "click_keyframes_index.json",
+    ):
         try:
             (output_dir / filename).unlink(missing_ok=True)
+        except OSError:
+            pass
+    for path in output_dir.glob("click_keyframes_*.png"):
+        try:
+            path.unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -146,6 +136,7 @@ def _maybe_generate_click_keyframes(
                 show_timestamp=True,
                 show_index=True,
                 draw_click_markers=True,
+                output_basename="keyframes_click_sheet",
             ),
             ffmpeg_path=ffmpeg_path,
         )

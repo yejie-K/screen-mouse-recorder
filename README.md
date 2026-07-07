@@ -1,10 +1,10 @@
 # Screen Mouse Recorder
 
-Windows desktop MVP for region screen recording plus structured mouse activity logs.
+Windows desktop app for region screen recording plus structured mouse activity logs.
 
 ## Run
 
-Use any Python 3.10+ on Windows:
+Use Python 3.10+ on Windows:
 
 ```powershell
 python -m pip install -r requirements.txt
@@ -27,7 +27,7 @@ Useful commands:
 .\start_recorder.cmd init-config
 
 # Regenerate mouse_summary.json and mouse_summary.xlsx for an existing session
-.\start_recorder.cmd postprocess .\sessions\20260609_153000
+.\start_recorder.cmd postprocess .\sessions\rec_20260609_153000
 
 # Run a 2-second automated real recording self-test
 .\start_recorder.cmd selftest-record --seconds 2
@@ -36,14 +36,17 @@ Useful commands:
 .\start_recorder.cmd selftest-pause --segment-seconds 0.8 --pause-seconds 0.5
 
 # Estimate video contact-sheet output without generating files
-.\start_recorder.cmd sample-frames .\sessions\20260609_153000\recording.mp4 --interval 10 --cols 5 --rows 6 --estimate-only
+.\start_recorder.cmd sample-frames .\sessions\rec_20260609_153000\recording.mp4 --interval 10 --cols 5 --rows 6 --estimate-only
 
 # Generate contact sheets for a selected video range
-.\start_recorder.cmd sample-frames .\sessions\20260609_153000\recording.mp4 --start 00:00 --end 30:00 --interval 10 --cols 5 --rows 6
+.\start_recorder.cmd sample-frames .\sessions\rec_20260609_153000\recording.mp4 --start 00:00 --end 30:00 --interval 10 --cols 5 --rows 6
 ```
 
-If you prefer PowerShell, use `powershell -ExecutionPolicy Bypass -File .\start_recorder.ps1 doctor`
-when local script execution is disabled.
+If PowerShell script execution is disabled, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_recorder.ps1 doctor
+```
 
 FFmpeg must be available as `ffmpeg.exe` on `PATH`, or configured in `config.json`:
 
@@ -52,6 +55,16 @@ FFmpeg must be available as `ffmpeg.exe` on `PATH`, or configured in `config.jso
   "ffmpeg_path": "D:\\tools\\ffmpeg\\bin\\ffmpeg.exe"
 }
 ```
+
+## Main Features
+
+- Fixed-size Tk desktop UI for recording and frame export.
+- Region screen recording with mouse event, sampling, wheel, click, and drag logs.
+- Optional local recording status banner.
+- Automatic report output after recording stops.
+- Frame export with interval sampling, click-keyframe sampling, crop preview, dense ranges, progress, and ETA.
+- Local GitHub update check and fast-forward update prompt.
+- Error reports with stable error codes under `logs/error_reports/`.
 
 ## Output
 
@@ -63,25 +76,37 @@ Each recording creates a unique folder under `sessions/`:
 - `session_meta.json`
 - `mouse_summary.json`
 - `mouse_summary.xlsx`
+- `mouse_analysis.xlsx`
 - `ffmpeg.log`
 
-Frame sampling creates a folder under `frame_sheets/` by default:
+Recording also creates `auto_report/` after stop when enough mouse data is available:
 
-- `sheets/sheet_001_00-00-00_to_00-04-50.jpg`
+- `report_summary.xlsx`
+- `metrics.json`
+- `chart_activity_timeline.png`
+- `chart_click_heatmap.png`
+- `chart_click_scatter.png`
+- `chart_drag_duration.png`
+- `keyframes_click_sheet.png`
+- `keyframes_click_sheet_index.json`
+
+Frame export creates a folder under `frame_exports/` by default:
+
+- `sheets/sheet_001_000000-000450.jpg`
 - `index.csv`
-- `report.html`
-- `config.json`
+- `preview.html`
+- `manifest.json`
 
-The `抽帧拼图` tab can also generate click-driven keyframe sheets. Choose `点击关键帧`
-as the mode, select a session video, and the tool will use `mouse_events.jsonl`
-from the same session to create `analysis_output/click_keyframes.png`.
+The frame export tab can also generate click-driven keyframe sheets. Choose the click-keyframe
+mode, select a session video, and the tool will use `mouse_events.jsonl` from the same session
+to create `frame_exports/click_.../keyframes_click_sheet.png`.
 
 ## Notes
 
 - The app records only mouse activity and selected screen pixels. It does not record keyboard input or audio.
-- Mouse hooks require Windows. The UI starts on other platforms only for development, but recording will be blocked.
-- If FFmpeg is missing, the app will show a clear error before recording starts.
-- The `抽帧拼图` tab works fully locally. It uses FFmpeg and Pillow only; it does not call any AI model.
+- Mouse hooks require Windows. The UI starts on other platforms only for development, but recording is blocked.
+- If FFmpeg is missing, the app shows a clear error before recording starts.
+- Frame export works fully locally. It uses FFmpeg and Pillow only; it does not call any AI model.
 - A custom session name can be entered before recording. The final folder keeps a timestamp prefix.
 - Pause/resume records separate MP4 segments and combines them into `recording.mp4` when the session ends.
 - After a recording ends, the selected region is cleared and the next session starts from a fresh region selection.

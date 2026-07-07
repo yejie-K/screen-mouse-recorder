@@ -22,6 +22,7 @@ from .frame_sampler import (
     probe_video,
     sample_video_to_sheets,
 )
+from .naming import FRAME_EXPORT_DIR_NAME
 from .postprocess import generate_summary
 from .selftest import run_pause_selftest, run_recording_selftest
 from .storage import SessionStorage
@@ -199,9 +200,11 @@ def sample_frames(base_dir: Path, args: argparse.Namespace) -> int:
             if args.output_dir
             else default_output_dir(
                 video,
-                base_dir / "frame_sheets",
+                base_dir / FRAME_EXPORT_DIR_NAME,
                 start_seconds=start_seconds,
                 end_seconds=end_seconds if end_seconds is not None else video_info.duration_seconds,
+                mode="dense" if dense_start is not None and dense_end is not None else "interval",
+                crop=crop,
             )
         )
         sampler_config = FrameSamplerConfig(
