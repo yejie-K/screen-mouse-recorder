@@ -19,6 +19,7 @@
   "calibration_residual_warning_px": 20,
   "ffmpeg_path": null,
   "frame_sampler_output_root": "frame_exports",
+  "frame_sampler_output_name": "",
   "frame_sampler_mode": "interval",
   "frame_sampler_start": "00:00",
   "frame_sampler_end": "",
