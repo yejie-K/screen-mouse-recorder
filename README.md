@@ -48,6 +48,27 @@ If PowerShell script execution is disabled, run:
 powershell -ExecutionPolicy Bypass -File .\start_recorder.ps1 doctor
 ```
 
+## Install / build / develop
+
+Editable install (also gets dev tooling: pytest, ruff, mypy, pyinstaller):
+
+```powershell
+python -m pip install -e ".[dev]"
+python -m pytest -q          # run tests
+ruff check src tests         # lint
+screen-mouse-recorder --version
+```
+
+Build a standalone Windows executable (FFmpeg/Tesseract stay external, see `tools/README.md`):
+
+```powershell
+python scripts/build_exe.py   # -> dist/screen-mouse-recorder.exe
+```
+
+The single version source is `screen_mouse_recorder.__version__`; `pyproject.toml` reads it dynamically.
+CI (`.github/workflows/ci.yml`) runs ruff + pytest on Windows for `main` and `dev/**`.
+
+
 FFmpeg must be available as `ffmpeg.exe` on `PATH`, or configured in `config.json`:
 
 ```json

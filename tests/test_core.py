@@ -869,6 +869,20 @@ class CoreSmokeTests(unittest.TestCase):
             self.assertEqual(result.metrics["clicks_total"], 2)
             self.assertTrue(zipfile.is_zipfile(result.outputs["report"]))
 
+    def test_config_example_json_matches_dataclass_fields(self) -> None:
+        from dataclasses import fields
+
+        example = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8-sig"))
+        expected = {f.name for f in fields(AppConfig)}
+        actual = set(example)
+
+        self.assertEqual(
+            actual,
+            expected,
+            "config.example.json is out of sync with AppConfig. "
+            f"Missing: {sorted(expected - actual)}; Unexpected: {sorted(actual - expected)}",
+        )
+
     @staticmethod
     def _sample_storage(session_dir: Path) -> SessionStorage:
         storage = SessionStorage(session_dir)

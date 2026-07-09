@@ -10,6 +10,7 @@ import sys
 import tkinter
 from typing import Any
 
+from . import __version__
 from .app import main as app_main
 from .config import AppConfig
 from .frame_sampler import (
@@ -50,6 +51,11 @@ def default_base_dir() -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="screen-mouse-recorder")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument("--base-dir", type=Path, default=default_base_dir(), help="Project/runtime base directory.")
     subparsers = parser.add_subparsers(dest="command")
 

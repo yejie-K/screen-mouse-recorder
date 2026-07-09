@@ -15,6 +15,8 @@
   "click_max_distance_px": 8,
   "drag_min_distance_px": 10,
   "double_click_window_ms": 500,
+  "calibration_click_tolerance_px": 80,
+  "calibration_residual_warning_px": 20,
   "ffmpeg_path": null,
   "frame_sampler_output_root": "frame_exports",
   "frame_sampler_mode": "interval",
