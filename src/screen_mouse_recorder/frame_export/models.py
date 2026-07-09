@@ -117,6 +117,7 @@ class ClickKeyframeEstimate:
 class FrameSamplerConfig:
     video_path: Path
     output_dir: Path
+    output_basename: str = ""
     start_seconds: float = 0.0
     end_seconds: float | None = None
     interval_seconds: float = 10.0
@@ -181,4 +182,3 @@ class FrameSamplerResult:
 
 
 ProgressCallback = Callable[[int, int, str], None]
-

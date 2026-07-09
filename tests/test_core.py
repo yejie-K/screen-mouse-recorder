@@ -213,6 +213,7 @@ class CoreSmokeTests(unittest.TestCase):
             FrameSamplerFormState(
                 video_path=Path("video.mp4"),
                 output_dir=Path("out"),
+                output_name="我的/导出:01",
                 start_text="00:01",
                 end_text="00:10",
                 interval_text="2.5",
@@ -236,6 +237,7 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(config.sheet_rows, 6)
         self.assertEqual(config.thumb_width, 120)
         self.assertEqual(config.output_format, "png")
+        self.assertEqual(config.output_basename, "我的_导出_01")
         self.assertEqual(config.crop, CropRegion(10, 20, 300, 120))
         self.assertEqual(config.dense_ranges[0], DenseRange(3, 5, 0.1))
         self.assertEqual(config.click_match_window_seconds, 0.1)
@@ -246,6 +248,7 @@ class CoreSmokeTests(unittest.TestCase):
                 video_path=Path("video.mp4"),
                 events_path=Path("mouse_events.jsonl"),
                 output_dir=Path("out"),
+                output_name="点击版*01",
                 max_frames_text="150",
                 time_dedupe_ms_text="1200",
                 distance_dedupe_px_text="60",
@@ -257,6 +260,7 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(config.time_dedupe_seconds, 1.2)
         self.assertEqual(config.distance_dedupe_px, 60)
         self.assertEqual(config.visual_change_threshold, 0.35)
+        self.assertEqual(config.output_basename, "点击版_01")
 
     def test_frame_sampler_ui_state_rejects_incomplete_dense_range(self) -> None:
         with self.assertRaises(ValueError):

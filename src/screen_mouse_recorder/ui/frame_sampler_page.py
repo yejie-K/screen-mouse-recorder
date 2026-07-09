@@ -4,7 +4,7 @@ from typing import Any
 import tkinter as tk
 from tkinter import ttk
 
-from .theme import COLORS, FONT_SMALL, FONT_UI
+from .theme import COLORS, FONT_SMALL, FONT_UI, FONT_UI_BOLD
 
 
 def build_frame_sampler_page(app: Any, parent: tk.Widget) -> None:
@@ -12,126 +12,125 @@ def build_frame_sampler_page(app: Any, parent: tk.Widget) -> None:
     parent.rowconfigure(0, weight=1)
     parent.rowconfigure(1, weight=0)
 
-    canvas = tk.Canvas(parent, bg=COLORS["app_bg"], highlightthickness=0)
-    scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-    canvas.configure(yscrollcommand=scrollbar.set)
-    canvas.grid(row=0, column=0, sticky="nsew")
-    scrollbar.grid(row=0, column=1, sticky="ns")
-
-    content = ttk.Frame(canvas, style="App.TFrame")
-    content_id = canvas.create_window((0, 0), window=content, anchor="nw")
+    content = ttk.Frame(parent, style="App.TFrame")
+    content.grid(row=0, column=0, sticky="nsew")
     content.columnconfigure(0, weight=1)
-
-    def configure_scroll(_event: tk.Event | None = None) -> None:
-        canvas.configure(scrollregion=canvas.bbox("all"))
-        canvas.itemconfigure(content_id, width=canvas.winfo_width())
-
-    content.bind("<Configure>", configure_scroll)
-    canvas.bind("<Configure>", configure_scroll)
-    canvas.bind_all("<MouseWheel>", lambda event: canvas.yview_scroll(int(-1 * (event.delta / 120)), "units"))
+    content.rowconfigure(1, weight=1)
 
     _build_source_panel(app, content).grid(row=0, column=0, sticky="ew", pady=(0, 12))
-    _build_estimate_panel(app, content).grid(row=1, column=0, sticky="ew", pady=(0, 12))
 
     middle = ttk.Frame(content, style="App.TFrame")
-    middle.grid(row=2, column=0, sticky="nsew")
-    middle.columnconfigure(0, weight=0, minsize=470)
-    middle.columnconfigure(1, weight=1, minsize=620)
+    middle.grid(row=1, column=0, sticky="nsew")
+    middle.columnconfigure(0, weight=0, minsize=430)
+    middle.columnconfigure(1, weight=1, minsize=660)
+    middle.rowconfigure(0, weight=1)
 
     _build_basic_panel(app, middle).grid(row=0, column=0, sticky="nsew", padx=(0, 12))
     _build_crop_panel(app, middle).grid(row=0, column=1, sticky="nsew")
 
-    actions = ttk.Frame(parent, style="App.TFrame")
-    actions.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-    actions.configure(height=68)
+    actions = tk.Frame(parent, bg=COLORS["panel_bg"], highlightbackground=COLORS["border"], highlightthickness=1)
+    actions.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+    actions.configure(height=64)
     actions.grid_propagate(False)
-    actions.columnconfigure(3, weight=1)
-    app.frame_estimate_button = ttk.Button(actions, text="预估", command=app.estimate_frame_sampling, width=10)
-    app.frame_estimate_button.grid(row=0, column=0, sticky="ew", padx=(0, 8), pady=2)
+    actions.columnconfigure(0, weight=0)
+    actions.columnconfigure(1, weight=1)
+
+    button_group = ttk.Frame(actions, style="Panel.TFrame")
+    button_group.grid(row=0, column=0, sticky="w", padx=12, pady=12)
+    app.frame_estimate_button = ttk.Button(button_group, text="预估", command=app.estimate_frame_sampling, width=10)
+    app.frame_estimate_button.grid(row=0, column=0, sticky="ew", padx=(0, 8))
     app.frame_generate_button = ttk.Button(
-        actions,
+        button_group,
         text="生成合成图",
         command=app.run_frame_sampling,
         style="Primary.TButton",
         width=14,
     )
-    app.frame_generate_button.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=2)
-    app.frame_open_button = ttk.Button(actions, text="打开输出", command=app.open_frame_output, state="disabled", width=10)
-    app.frame_open_button.grid(row=0, column=2, sticky="ew", padx=(0, 8), pady=2)
+    app.frame_generate_button.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+    app.frame_open_button = ttk.Button(button_group, text="打开输出", command=app.open_frame_output, state="disabled", width=10)
+    app.frame_open_button.grid(row=0, column=2, sticky="ew")
+
+    progress_group = ttk.Frame(actions, style="Panel.TFrame")
+    progress_group.grid(row=0, column=1, sticky="ew", padx=(8, 12), pady=10)
+    progress_group.columnconfigure(0, weight=1)
+    progress_group.columnconfigure(1, weight=0, minsize=150)
     tk.Label(
-        actions,
+        progress_group,
         textvariable=app.frame_progress_var,
-        bg=COLORS["app_bg"],
+        bg=COLORS["panel_bg"],
+        fg=COLORS["muted"],
+        anchor="w",
+        font=FONT_SMALL,
+    ).grid(row=0, column=0, sticky="ew")
+    tk.Label(
+        progress_group,
+        textvariable=app.frame_remaining_var,
+        bg=COLORS["panel_bg"],
         fg=COLORS["muted"],
         anchor="e",
         font=FONT_SMALL,
-    ).grid(row=0, column=3, sticky="e")
+    ).grid(row=0, column=1, sticky="e", padx=(8, 0))
     app.frame_progress_bar = ttk.Progressbar(
-        actions,
+        progress_group,
         variable=app.frame_progress_percent_var,
         maximum=100,
         mode="determinate",
     )
-    app.frame_progress_bar.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-    tk.Label(
-        actions,
-        textvariable=app.frame_remaining_var,
-        bg=COLORS["app_bg"],
-        fg=COLORS["muted"],
-        anchor="e",
-        font=FONT_SMALL,
-    ).grid(row=1, column=3, sticky="e", pady=(8, 0))
+    app.frame_progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
 
 def _build_source_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
-    panel = ttk.LabelFrame(parent, text="视频与输出", style="Panel.TLabelframe", padding=14)
+    panel = ttk.LabelFrame(parent, text="任务与预估", style="Panel.TLabelframe", padding=12)
     panel.columnconfigure(1, weight=1)
-    panel.columnconfigure(2, minsize=112)
+    panel.columnconfigure(2, minsize=100)
+    panel.columnconfigure(3, minsize=54)
+    panel.columnconfigure(4, minsize=168)
 
     ttk.Label(panel, text="视频", style="Panel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
-    ttk.Entry(panel, textvariable=app.frame_video_var, state="readonly").grid(row=0, column=1, sticky="ew", padx=(0, 8))
-    ttk.Button(panel, text="选择视频", command=app.choose_frame_video, width=12).grid(row=0, column=2, sticky="ew")
+    ttk.Entry(panel, textvariable=app.frame_video_var, state="readonly").grid(
+        row=0, column=1, sticky="ew", padx=(0, 8)
+    )
+    ttk.Button(panel, text="选择视频", command=app.choose_frame_video, width=10).grid(row=0, column=2, sticky="ew")
 
     ttk.Label(panel, text="输出", style="Panel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
     ttk.Entry(panel, textvariable=app.frame_output_var).grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(8, 0))
-    ttk.Button(panel, text="选择目录", command=app.choose_frame_output, width=12).grid(row=1, column=2, sticky="ew", pady=(8, 0))
-    return panel
+    ttk.Button(panel, text="选择目录", command=app.choose_frame_output, width=10).grid(row=1, column=2, sticky="ew", pady=(8, 0))
+    ttk.Label(panel, text="文件名", style="Panel.TLabel").grid(row=1, column=3, sticky="w", padx=(12, 8), pady=(8, 0))
+    ttk.Entry(panel, textvariable=app.frame_output_name_var).grid(row=1, column=4, sticky="ew", pady=(8, 0))
 
-
-def _build_estimate_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
-    panel = ttk.LabelFrame(parent, text="视频信息与预估", style="Panel.TLabelframe", padding=14)
-    panel.columnconfigure(0, weight=1)
     metrics = ttk.Frame(panel, style="Panel.TFrame")
-    metrics.grid(row=0, column=0, sticky="ew")
+    metrics.grid(row=2, column=0, columnspan=5, sticky="ew", pady=(10, 0))
     for column in range(5):
         metrics.columnconfigure(column, weight=1)
-    app._frame_metric(metrics, 0, "时长", app.frame_duration_var)
-    app._frame_metric(metrics, 1, "分辨率", app.frame_resolution_var)
-    app._frame_metric(metrics, 2, "抽帧", app.frame_count_var)
-    app._frame_metric(metrics, 3, "合成图", app.frame_sheet_count_var)
-    app._frame_metric(metrics, 4, "耗时", app.frame_eta_var)
-    tk.Label(
-        panel,
-        textvariable=app.frame_status_var,
-        bg=COLORS["panel_alt"],
-        fg=COLORS["text_secondary"],
-        height=1,
-        anchor="w",
-        justify="left",
-        wraplength=1030,
-        font=FONT_SMALL,
-        padx=8,
-        pady=6,
-    ).grid(row=1, column=0, sticky="ew", pady=(8, 0))
+    _metric_text(metrics, 0, "时长", app.frame_duration_var)
+    _metric_text(metrics, 1, "分辨率", app.frame_resolution_var)
+    _metric_text(metrics, 2, "抽帧", app.frame_count_var)
+    _metric_text(metrics, 3, "合成图", app.frame_sheet_count_var)
+    _metric_text(metrics, 4, "耗时", app.frame_eta_var)
     return panel
+
+
+def _metric_text(parent: tk.Widget, column: int, label: str, variable: tk.StringVar) -> None:
+    item = tk.Frame(parent, bg=COLORS["panel_bg"])
+    item.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 14, 0))
+    item.columnconfigure(1, weight=1)
+    tk.Label(item, text=f"{label} ", bg=COLORS["panel_bg"], fg=COLORS["muted"], font=FONT_SMALL).grid(row=0, column=0, sticky="w")
+    tk.Label(
+        item,
+        textvariable=variable,
+        bg=COLORS["panel_bg"],
+        fg=COLORS["text"],
+        font=FONT_UI_BOLD,
+        anchor="w",
+    ).grid(row=0, column=1, sticky="ew")
 
 
 def _build_basic_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
-    panel = ttk.LabelFrame(parent, text="抽帧参数", style="Panel.TLabelframe", padding=14)
-    panel.columnconfigure(0, weight=0, minsize=76)
-    panel.columnconfigure(1, weight=1, minsize=132)
-    panel.columnconfigure(2, weight=0, minsize=76)
-    panel.columnconfigure(3, weight=1, minsize=132)
+    panel = ttk.LabelFrame(parent, text="抽帧参数", style="Panel.TLabelframe", padding=12)
+    panel.columnconfigure(0, weight=0, minsize=74)
+    panel.columnconfigure(1, weight=1, minsize=118)
+    panel.columnconfigure(2, weight=0, minsize=74)
+    panel.columnconfigure(3, weight=1, minsize=118)
     ttk.Label(panel, text="合成模式", style="Panel.TLabel").grid(row=0, column=0, sticky="w", pady=5, padx=(0, 8))
     mode = ttk.Combobox(
         panel,
@@ -168,33 +167,81 @@ def _build_basic_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
 
     flags = ttk.Frame(panel, style="Panel.TFrame")
     flags.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(8, 0))
-    for column in range(3):
-        flags.columnconfigure(column, weight=1)
-    _check(flags, 0, "显示时间戳", app.frame_show_timestamp_var)
-    _check(flags, 1, "显示序号", app.frame_show_index_var)
-    _check(flags, 2, "叠加鼠标点击点", app.frame_draw_click_markers_var)
+    flags.columnconfigure(0, weight=1)
+    _check(flags, 0, "显示时间戳", app.frame_show_timestamp_var, columnspan=4)
+    _check(flags, 1, "显示序号", app.frame_show_index_var, columnspan=4)
+    _check(flags, 2, "叠加鼠标点击点", app.frame_draw_click_markers_var, columnspan=4)
     _build_dense_section(app, panel, 7)
     return panel
 
 
 def _build_crop_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
-    panel = ttk.LabelFrame(parent, text="画面裁剪", style="Panel.TLabelframe", padding=14)
+    panel = ttk.LabelFrame(parent, text="画面裁剪", style="Panel.TLabelframe", padding=12)
     panel.columnconfigure(0, weight=1)
+    panel.rowconfigure(2, weight=1)
 
-    preview_wrap = tk.Frame(panel, bg=COLORS["panel_alt"], highlightbackground=COLORS["border"], highlightthickness=1)
-    preview_wrap.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 10))
-    preview_wrap.configure(height=284)
+    crop_tools = ttk.Frame(panel, style="Panel.TFrame")
+    crop_tools.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+    crop_tools.columnconfigure(2, weight=1)
+    _check(crop_tools, 0, "启用裁剪", app.frame_crop_enabled_var)
+    ttk.Button(crop_tools, text="重置全屏", command=app.reset_frame_crop, width=10).grid(row=0, column=1, sticky="w", padx=(12, 0))
+
+    coord_fields = ttk.Frame(panel, style="Panel.TFrame")
+    coord_fields.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+    for column in range(4):
+        coord_fields.columnconfigure(column, weight=1)
+    _labeled_entry(coord_fields, 0, 0, "X", app.frame_crop_x_var, "0")
+    _labeled_entry(coord_fields, 0, 2, "Y", app.frame_crop_y_var, "0")
+    _labeled_entry(coord_fields, 1, 0, "宽", app.frame_crop_w_var, "全屏")
+    _labeled_entry(coord_fields, 1, 2, "高", app.frame_crop_h_var, "全屏")
+
+    preview_grid = ttk.Frame(panel, style="Panel.TFrame")
+    preview_grid.grid(row=2, column=0, columnspan=4, sticky="nsew", pady=(0, 10))
+    preview_grid.columnconfigure(0, weight=1, uniform="crop_preview")
+    preview_grid.columnconfigure(1, weight=1, uniform="crop_preview")
+    preview_grid.rowconfigure(1, weight=1)
+
+    tk.Label(
+        preview_grid,
+        text="全画面定位",
+        bg=COLORS["panel_bg"],
+        fg=COLORS["text_secondary"],
+        anchor="w",
+        font=FONT_SMALL,
+    ).grid(row=0, column=0, sticky="ew", padx=(0, 6), pady=(0, 4))
+    tk.Label(
+        preview_grid,
+        text="裁剪预览",
+        bg=COLORS["panel_bg"],
+        fg=COLORS["text_secondary"],
+        anchor="w",
+        font=FONT_SMALL,
+    ).grid(row=0, column=1, sticky="ew", padx=(6, 0), pady=(0, 4))
+
+    preview_wrap = tk.Frame(preview_grid, bg=COLORS["panel_alt"], highlightbackground=COLORS["border"], highlightthickness=1)
+    preview_wrap.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
+    preview_wrap.configure(height=220)
     preview_wrap.grid_propagate(False)
     preview_wrap.columnconfigure(0, weight=1)
     preview_wrap.rowconfigure(0, weight=1)
-    app.frame_crop_canvas = tk.Canvas(preview_wrap, width=600, height=266, bg="#1f1f1f", highlightthickness=0)
+    app.frame_crop_canvas = tk.Canvas(preview_wrap, width=320, height=202, bg="#1f1f1f", highlightthickness=0)
     app.frame_crop_canvas.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
     app.bind_frame_crop_canvas()
 
+    zoom_wrap = tk.Frame(preview_grid, bg=COLORS["panel_alt"], highlightbackground=COLORS["border"], highlightthickness=1)
+    zoom_wrap.grid(row=1, column=1, sticky="nsew", padx=(6, 0))
+    zoom_wrap.configure(height=220)
+    zoom_wrap.grid_propagate(False)
+    zoom_wrap.columnconfigure(0, weight=1)
+    zoom_wrap.rowconfigure(0, weight=1)
+    app.frame_crop_zoom_canvas = tk.Canvas(zoom_wrap, width=320, height=202, bg="#1f1f1f", highlightthickness=0)
+    app.frame_crop_zoom_canvas.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+    app.bind_frame_crop_zoom_canvas()
+
     time_controls = ttk.Frame(panel, style="Panel.TFrame")
-    time_controls.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+    time_controls.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(0, 10))
     time_controls.columnconfigure(1, weight=1)
-    ttk.Label(time_controls, text="\u9884\u89c8\u5e27", style="Panel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+    ttk.Label(time_controls, text="帧位置", style="Panel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
     app.frame_crop_time_scale = ttk.Scale(
         time_controls,
         from_=0.0,
@@ -211,39 +258,11 @@ def _build_crop_panel(app: Any, parent: tk.Widget) -> ttk.LabelFrame:
         anchor="e",
     ).grid(row=0, column=2, sticky="e")
 
-    quick_row = ttk.Frame(panel, style="Panel.TFrame")
-    quick_row.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(0, 10))
-    quick_row.columnconfigure(5, weight=1)
     app.frame_crop_preview_buttons = []
-    for column, (label, fraction) in enumerate((("0%", 0.0), ("25%", 0.25), ("50%", 0.5), ("75%", 0.75), ("100%", 1.0))):
-        button = ttk.Button(
-            quick_row,
-            text=label,
-            command=lambda value=fraction: app.set_frame_crop_preview_fraction(value),
-            width=6,
-        )
-        button.grid(row=0, column=column, sticky="w", padx=(0, 6))
-        app.frame_crop_preview_buttons.append(button)
     app.sync_frame_crop_preview_controls()
 
     for column in range(4):
         panel.columnconfigure(column, weight=1)
-    _labeled_entry(panel, 3, 0, "x", app.frame_crop_x_var, "0")
-    _labeled_entry(panel, 3, 2, "y", app.frame_crop_y_var, "0")
-    _labeled_entry(panel, 4, 0, "宽", app.frame_crop_w_var, "全屏")
-    _labeled_entry(panel, 4, 2, "高", app.frame_crop_h_var, "全屏")
-
-    buttons = ttk.Frame(panel, style="Panel.TFrame")
-    buttons.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(6, 0))
-    ttk.Button(buttons, text="重置全屏", command=app.reset_frame_crop, width=10).grid(row=0, column=0)
-    tk.Label(
-        panel,
-        text="拖动滑条切换预览帧；在上方画面拖拽框选裁剪区域。",
-        bg=COLORS["panel_bg"],
-        fg=COLORS["muted"],
-        anchor="w",
-        font=FONT_SMALL,
-    ).grid(row=6, column=0, columnspan=4, sticky="ew", pady=(8, 0))
     return panel
 
 
@@ -260,9 +279,9 @@ def _build_dense_section(app: Any, parent: tk.Widget, row: int) -> None:
         bg=COLORS["panel_bg"],
         fg=COLORS["text_secondary"],
         anchor="w",
-        font=FONT_UI,
+        font=FONT_UI_BOLD,
     ).grid(row=0, column=0, sticky="ew")
-    ttk.Button(header, text="+ 添加关键段", command=lambda: app.add_frame_dense_range(), width=14).grid(row=0, column=1, sticky="e")
+    ttk.Button(header, text="添加关键段", command=lambda: app.add_frame_dense_range(), width=12).grid(row=0, column=1, sticky="e")
 
     app.frame_dense_rows_container = ttk.Frame(parent, style="Panel.TFrame")
     app.frame_dense_rows_container.grid(row=row + 2, column=0, columnspan=4, sticky="ew")

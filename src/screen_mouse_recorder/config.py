@@ -28,6 +28,7 @@ class AppConfig:
     calibration_residual_warning_px: int = 20
     ffmpeg_path: str | None = None
     frame_sampler_output_root: str = "frame_exports"
+    frame_sampler_output_name: str = ""
     frame_sampler_mode: str = "interval"
     frame_sampler_start: str = "00:00"
     frame_sampler_end: str = ""

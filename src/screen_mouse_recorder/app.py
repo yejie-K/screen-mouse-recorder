@@ -113,6 +113,7 @@ class ScreenMouseRecorderApp:
         self.auto_report_output_dir: Path | None = None
         self.frame_video_var = tk.StringVar(value="未选择")
         self.frame_output_var = tk.StringVar(value=str((base_dir / self.config.frame_sampler_output_root).resolve()))
+        self.frame_output_name_var = tk.StringVar(value=self.config.frame_sampler_output_name)
         self.frame_duration_var = tk.StringVar(value="--")
         self.frame_resolution_var = tk.StringVar(value="--")
         self.frame_count_var = tk.StringVar(value="--")
@@ -156,10 +157,13 @@ class ScreenMouseRecorderApp:
         self.frame_is_running = False
         self.frame_progress_started_ms: float | None = None
         self.frame_crop_canvas: tk.Canvas | None = None
+        self.frame_crop_zoom_canvas: tk.Canvas | None = None
         self.frame_crop_preview_original: Image.Image | None = None
         self.frame_crop_preview_photo: ImageTk.PhotoImage | None = None
+        self.frame_crop_zoom_photo: ImageTk.PhotoImage | None = None
         self.frame_crop_preview_scale = 1.0
         self.frame_crop_preview_offset = (0, 0)
+        self.frame_crop_view_zoom = 1.0
         self.frame_crop_drag_start: tuple[int, int] | None = None
         self.frame_crop_rect_id: int | None = None
         self.frame_crop_preview_seconds_var = tk.DoubleVar(value=0.0)
@@ -571,6 +575,7 @@ class ScreenMouseRecorderApp:
             self.startup_countdown_var,
             self.session_name_var,
             self.frame_mode_var,
+            self.frame_output_name_var,
             self.frame_start_var,
             self.frame_end_var,
             self.frame_interval_var,
@@ -1744,8 +1749,17 @@ class ScreenMouseRecorderApp:
         canvas.bind("<ButtonPress-1>", self._on_frame_crop_press)
         canvas.bind("<B1-Motion>", self._on_frame_crop_drag)
         canvas.bind("<ButtonRelease-1>", self._on_frame_crop_release)
+        canvas.bind("<MouseWheel>", self._on_frame_crop_mousewheel)
+        canvas.bind("<Double-Button-1>", self._reset_frame_crop_view_zoom)
         canvas.bind("<Configure>", lambda _event: self._render_frame_crop_preview())
         self._clear_frame_crop_preview()
+
+    def bind_frame_crop_zoom_canvas(self) -> None:
+        canvas = self.frame_crop_zoom_canvas
+        if canvas is None:
+            return
+        canvas.bind("<Configure>", lambda _event: self._render_frame_crop_zoom_preview())
+        self._clear_frame_crop_zoom_preview()
 
     def load_frame_crop_preview(self, show_message: bool = True) -> None:
         video_path = self.frame_source_path
@@ -1792,6 +1806,7 @@ class ScreenMouseRecorderApp:
         if self.frame_crop_preview_original is not None:
             self.frame_crop_preview_original.close()
         self.frame_crop_preview_original = image
+        self.frame_crop_view_zoom = 1.0
         self.frame_status_var.set("裁剪预览已读取；拖拽框选区域，不框选则默认全屏。")
         self._render_frame_crop_preview()
 
@@ -1833,21 +1848,26 @@ class ScreenMouseRecorderApp:
             self.frame_crop_preview_original.close()
         self.frame_crop_preview_original = None
         self.frame_crop_preview_photo = None
+        self.frame_crop_zoom_photo = None
+        self.frame_crop_view_zoom = 1.0
         self.frame_crop_drag_start = None
         self.frame_crop_rect_id = None
         canvas = self.frame_crop_canvas
-        if canvas is None:
-            return
+        if canvas is not None:
+            self._draw_crop_canvas_message(canvas, "选择视频后自动预览首帧")
+        self._clear_frame_crop_zoom_preview()
+
+    def _clear_frame_crop_zoom_preview(self) -> None:
+        self.frame_crop_zoom_photo = None
+        canvas = self.frame_crop_zoom_canvas
+        if canvas is not None:
+            self._draw_crop_canvas_message(canvas, "框选后显示裁剪预览")
+
+    def _draw_crop_canvas_message(self, canvas: tk.Canvas, text: str) -> None:
         canvas.delete("all")
         width = max(1, canvas.winfo_width() or int(canvas.cget("width")))
         height = max(1, canvas.winfo_height() or int(canvas.cget("height")))
-        canvas.create_text(
-            width // 2,
-            height // 2,
-            text="选择视频后自动预览首帧",
-            fill="#dfe7ec",
-            font=("Segoe UI", 10),
-        )
+        canvas.create_text(width // 2, height // 2, text=text, fill="#dfe7ec", font=("Segoe UI", 10))
 
     def _render_frame_crop_preview(self) -> None:
         canvas = self.frame_crop_canvas
@@ -1860,11 +1880,22 @@ class ScreenMouseRecorderApp:
 
         canvas_width = max(1, canvas.winfo_width() or int(canvas.cget("width")))
         canvas_height = max(1, canvas.winfo_height() or int(canvas.cget("height")))
-        scale = min(canvas_width / image.width, canvas_height / image.height)
+        fit_scale = min(canvas_width / image.width, canvas_height / image.height)
+        scale = fit_scale * self.frame_crop_view_zoom
         display_width = max(1, round(image.width * scale))
         display_height = max(1, round(image.height * scale))
-        offset_x = max(0, (canvas_width - display_width) // 2)
-        offset_y = max(0, (canvas_height - display_height) // 2)
+        if self.frame_crop_view_zoom <= 1.001:
+            offset_x = (canvas_width - display_width) // 2
+            offset_y = (canvas_height - display_height) // 2
+        else:
+            offset_x, offset_y = self._clamp_frame_crop_view_offset(
+                self.frame_crop_preview_offset[0],
+                self.frame_crop_preview_offset[1],
+                display_width,
+                display_height,
+                canvas_width,
+                canvas_height,
+            )
         preview = image.resize((display_width, display_height), Image.Resampling.LANCZOS)
         self.frame_crop_preview_photo = ImageTk.PhotoImage(preview)
         self.frame_crop_preview_scale = scale
@@ -1873,24 +1904,125 @@ class ScreenMouseRecorderApp:
         canvas.delete("all")
         canvas.create_image(offset_x, offset_y, image=self.frame_crop_preview_photo, anchor="nw")
         self._draw_frame_crop_rect_from_vars()
+        self._render_frame_crop_zoom_preview()
+
+    def _on_frame_crop_mousewheel(self, event: tk.Event) -> str:
+        image = self.frame_crop_preview_original
+        canvas = self.frame_crop_canvas
+        if image is None or canvas is None:
+            return "break"
+        old_scale = self.frame_crop_preview_scale
+        if old_scale <= 0:
+            return "break"
+        offset_x, offset_y = self.frame_crop_preview_offset
+        focus_x = max(0.0, min(float(image.width), (float(event.x) - offset_x) / old_scale))
+        focus_y = max(0.0, min(float(image.height), (float(event.y) - offset_y) / old_scale))
+        factor = 1.15 if event.delta > 0 else 1 / 1.15
+        new_zoom = max(1.0, min(6.0, self.frame_crop_view_zoom * factor))
+        if abs(new_zoom - self.frame_crop_view_zoom) < 0.001:
+            return "break"
+        self.frame_crop_view_zoom = new_zoom
+
+        canvas_width = max(1, canvas.winfo_width() or int(canvas.cget("width")))
+        canvas_height = max(1, canvas.winfo_height() or int(canvas.cget("height")))
+        new_scale = min(canvas_width / image.width, canvas_height / image.height) * self.frame_crop_view_zoom
+        display_width = max(1, round(image.width * new_scale))
+        display_height = max(1, round(image.height * new_scale))
+        target_offset_x = round(float(event.x) - focus_x * new_scale)
+        target_offset_y = round(float(event.y) - focus_y * new_scale)
+        self.frame_crop_preview_offset = self._clamp_frame_crop_view_offset(
+            target_offset_x,
+            target_offset_y,
+            display_width,
+            display_height,
+            canvas_width,
+            canvas_height,
+        )
+        self._render_frame_crop_preview()
+        return "break"
+
+    def _reset_frame_crop_view_zoom(self, _event: tk.Event | None = None) -> str:
+        self.frame_crop_view_zoom = 1.0
+        self._render_frame_crop_preview()
+        return "break"
+
+    def _clamp_frame_crop_view_offset(
+        self,
+        offset_x: int,
+        offset_y: int,
+        display_width: int,
+        display_height: int,
+        canvas_width: int,
+        canvas_height: int,
+    ) -> tuple[int, int]:
+        if display_width <= canvas_width:
+            clamped_x = (canvas_width - display_width) // 2
+        else:
+            clamped_x = max(canvas_width - display_width, min(0, offset_x))
+        if display_height <= canvas_height:
+            clamped_y = (canvas_height - display_height) // 2
+        else:
+            clamped_y = max(canvas_height - display_height, min(0, offset_y))
+        return clamped_x, clamped_y
+
+    def _render_frame_crop_zoom_preview(self) -> None:
+        canvas = self.frame_crop_zoom_canvas
+        image = self.frame_crop_preview_original
+        if canvas is None:
+            return
+        if image is None:
+            self._clear_frame_crop_zoom_preview()
+            return
+        bounds = self._frame_crop_bounds_from_vars()
+        if bounds is None:
+            self.frame_crop_zoom_photo = None
+            self._draw_crop_canvas_message(canvas, "框选后显示裁剪预览")
+            return
+
+        crop = image.crop(bounds)
+        canvas_width = max(1, canvas.winfo_width() or int(canvas.cget("width")))
+        canvas_height = max(1, canvas.winfo_height() or int(canvas.cget("height")))
+        crop_width = max(1, crop.width)
+        crop_height = max(1, crop.height)
+        scale = min(canvas_width / crop_width, canvas_height / crop_height)
+        display_width = max(1, round(crop_width * scale))
+        display_height = max(1, round(crop_height * scale))
+        offset_x = max(0, (canvas_width - display_width) // 2)
+        offset_y = max(0, (canvas_height - display_height) // 2)
+        preview = crop.resize((display_width, display_height), Image.Resampling.LANCZOS)
+        self.frame_crop_zoom_photo = ImageTk.PhotoImage(preview)
+        canvas.delete("all")
+        canvas.create_image(offset_x, offset_y, image=self.frame_crop_zoom_photo, anchor="nw")
+
+    def _frame_crop_bounds_from_vars(self) -> tuple[int, int, int, int] | None:
+        image = self.frame_crop_preview_original
+        if image is None or not self.frame_crop_enabled_var.get():
+            return None
+        width = self._safe_int_string(self.frame_crop_w_var, 0, 0, image.width)
+        height = self._safe_int_string(self.frame_crop_h_var, 0, 0, image.height)
+        if width <= 0 or height <= 0:
+            return None
+        x = self._safe_int_string(self.frame_crop_x_var, 0, 0, image.width - 1)
+        y = self._safe_int_string(self.frame_crop_y_var, 0, 0, image.height - 1)
+        right = max(x + 1, min(image.width, x + width))
+        bottom = max(y + 1, min(image.height, y + height))
+        return x, y, right, bottom
 
     def _draw_frame_crop_rect_from_vars(self) -> None:
         canvas = self.frame_crop_canvas
         image = self.frame_crop_preview_original
-        if canvas is None or image is None or not self.frame_crop_enabled_var.get():
+        if canvas is None or image is None:
             return
-        width = self._safe_int_string(self.frame_crop_w_var, 0, 0, image.width)
-        height = self._safe_int_string(self.frame_crop_h_var, 0, 0, image.height)
-        if width <= 0 or height <= 0:
+        bounds = self._frame_crop_bounds_from_vars()
+        if bounds is None:
             return
-        x = self._safe_int_string(self.frame_crop_x_var, 0, 0, image.width - 1)
-        y = self._safe_int_string(self.frame_crop_y_var, 0, 0, image.height - 1)
+        x, y, right, bottom = bounds
         scale = self.frame_crop_preview_scale
         offset_x, offset_y = self.frame_crop_preview_offset
         x1 = offset_x + round(x * scale)
         y1 = offset_y + round(y * scale)
-        x2 = offset_x + round(min(image.width, x + width) * scale)
-        y2 = offset_y + round(min(image.height, y + height) * scale)
+        x2 = offset_x + round(right * scale)
+        y2 = offset_y + round(bottom * scale)
         self.frame_crop_rect_id = canvas.create_rectangle(x1, y1, x2, y2, outline="#ffd166", width=2)
 
     def _on_frame_crop_press(self, event: tk.Event) -> str | None:
@@ -2155,6 +2287,7 @@ class ScreenMouseRecorderApp:
             FrameSamplerFormState(
                 video_path=video_path,
                 output_dir=output_dir,
+                output_name=self.frame_output_name_var.get(),
                 start_text=self.frame_start_var.get(),
                 end_text=self.frame_end_var.get(),
                 interval_text=self.frame_interval_var.get(),
@@ -2198,6 +2331,7 @@ class ScreenMouseRecorderApp:
                 video_path=video_path,
                 events_path=events_path,
                 output_dir=output_dir,
+                output_name=self.frame_output_name_var.get(),
                 max_frames_text=self.frame_keyframe_max_var.get(),
                 cols_text=self.frame_cols_var.get(),
                 rows_text=self.frame_rows_var.get(),
@@ -2238,6 +2372,7 @@ class ScreenMouseRecorderApp:
         except OSError:
             self.config.frame_sampler_output_root = FRAME_EXPORT_DIR_NAME
         self.config.frame_sampler_mode = "click_keyframes" if self._frame_is_click_keyframe_mode() else "interval"
+        self.config.frame_sampler_output_name = self.frame_output_name_var.get().strip()
         self.config.frame_sampler_start = self.frame_start_var.get().strip()
         self.config.frame_sampler_end = self.frame_end_var.get().strip()
         self.config.frame_sampler_interval_seconds = self._safe_float_string(self.frame_interval_var, 10.0, 0.1, 3600.0)

@@ -73,7 +73,8 @@ def sample_video_to_sheets(
 
     ffmpeg = resolve_ffmpeg(ffmpeg_path)
     output_dir = config.output_dir.resolve()
-    sheets_dir = output_dir / "sheets"
+    custom_basename = str(config.output_basename or "").strip()
+    sheets_dir = output_dir if custom_basename else output_dir / "sheets"
     sheets_dir.mkdir(parents=True, exist_ok=True)
 
     sheet_paths: list[Path] = []
@@ -98,7 +99,13 @@ def sample_video_to_sheets(
         first = compact_timecode(sheet_entries[0].seconds)
         last = compact_timecode(sheet_entries[-1].seconds)
         suffix = "png" if output_format == "png" else "jpg"
-        sheet_path = sheets_dir / f"sheet_{sheet_entries[0].sheet_index:03d}_{first}-{last}.{suffix}"
+        if custom_basename:
+            if len(plan) <= frames_per_sheet:
+                sheet_path = sheets_dir / f"{custom_basename}.{suffix}"
+            else:
+                sheet_path = sheets_dir / f"{custom_basename}_{sheet_entries[0].sheet_index:03d}.{suffix}"
+        else:
+            sheet_path = sheets_dir / f"sheet_{sheet_entries[0].sheet_index:03d}_{first}-{last}.{suffix}"
         if output_format == "png":
             sheet_image.save(sheet_path, "PNG", optimize=True)
         else:
@@ -110,11 +117,11 @@ def sample_video_to_sheets(
 
     if progress:
         progress(total, total, "写入索引")
-    index_csv = output_dir / "index.csv"
+    index_csv = output_dir / (f"{custom_basename}_index.csv" if custom_basename else "index.csv")
     _write_index_csv(index_csv, plan, sheet_paths)
-    config_json = output_dir / "manifest.json"
+    config_json = output_dir / (f"{custom_basename}_manifest.json" if custom_basename else "manifest.json")
     _write_config_json(config_json, config, video_info, estimate)
-    report_html = output_dir / "preview.html"
+    report_html = output_dir / (f"{custom_basename}_preview.html" if custom_basename else "preview.html")
     _write_report_html(report_html, config, video_info, estimate, sheet_paths, time.perf_counter() - start_time)
 
     if progress:

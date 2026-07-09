@@ -11,6 +11,7 @@ from .timecode import parse_timecode
 class FrameSamplerFormState:
     video_path: Path
     output_dir: Path
+    output_name: str = ""
     start_text: str = ""
     end_text: str = ""
     interval_text: str = "10"
@@ -36,6 +37,7 @@ class ClickKeyframeFormState:
     video_path: Path
     events_path: Path
     output_dir: Path
+    output_name: str = ""
     max_frames_text: str = "0"
     cols_text: str = "5"
     rows_text: str = "6"
@@ -53,6 +55,7 @@ def build_frame_sampler_config_from_state(state: FrameSamplerFormState) -> Frame
     return FrameSamplerConfig(
         video_path=state.video_path,
         output_dir=state.output_dir,
+        output_basename=sanitize_output_basename(state.output_name),
         start_seconds=parse_timecode(state.start_text) or 0.0,
         end_seconds=parse_timecode(state.end_text),
         interval_seconds=safe_float_text(state.interval_text, 10.0, 0.1, 3600.0),
@@ -82,6 +85,7 @@ def build_click_keyframe_config_from_state(state: ClickKeyframeFormState) -> Cli
         video_path=state.video_path,
         events_path=state.events_path.resolve(),
         output_dir=state.output_dir,
+        output_basename=sanitize_output_basename(state.output_name) or "keyframes_click_sheet",
         max_frames=safe_int_text(state.max_frames_text, 0, 0, 100000),
         sheet_cols=safe_int_text(state.cols_text, 5, 1, 12),
         sheet_rows=safe_int_text(state.rows_text, 6, 1, 12),
@@ -165,3 +169,13 @@ def safe_float_text(value: str, default: float, minimum: float, maximum: float) 
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+def sanitize_output_basename(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    forbidden = '<>:"/\\|?*'
+    cleaned = "".join("_" if char in forbidden or ord(char) < 32 else char for char in text)
+    cleaned = cleaned.strip(" ._")
+    return cleaned[:120]
