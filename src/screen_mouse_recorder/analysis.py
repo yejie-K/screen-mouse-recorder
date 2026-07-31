@@ -13,7 +13,8 @@ from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.styles import Alignment, Font, PatternFill
 from PIL import Image, ImageDraw, ImageFont
 
-from .frame_sampler import ClickKeyframeConfig, generate_click_keyframe_sheets
+from .analysis_handoff import ANALYSIS_HANDOFF_RELATIVE_PATH, write_analysis_handoff
+from .frame_sampler import build_click_summary_config, generate_click_keyframe_sheets
 from .naming import default_report_output_dir
 from .postprocess import iter_jsonl, row_inside_video_region
 from .storage import SessionStorage
@@ -118,25 +119,14 @@ def _maybe_generate_click_keyframes(
     storage = SessionStorage(session_dir)
     if not storage.recording_mp4.exists() or not storage.mouse_events.exists():
         return
+    handoff_path = session_dir / ANALYSIS_HANDOFF_RELATIVE_PATH
+    handoff_path.unlink(missing_ok=True)
     try:
         result = generate_click_keyframe_sheets(
-            ClickKeyframeConfig(
-                video_path=storage.recording_mp4,
-                events_path=storage.mouse_events,
-                output_dir=output_dir,
-                max_frames=0,
-                sheet_cols=5,
-                sheet_rows=6,
-                thumb_width=320,
-                time_dedupe_seconds=1.5,
-                distance_dedupe_px=80.0,
-                visual_change_threshold=0.22,
-                include_double_clicks=False,
-                include_drag_events=False,
-                show_timestamp=True,
-                show_index=True,
-                draw_click_markers=True,
-                output_basename="keyframes_click_sheet",
+            build_click_summary_config(
+                storage.recording_mp4,
+                storage.mouse_events,
+                output_dir,
             ),
             ffmpeg_path=ffmpeg_path,
         )
@@ -145,7 +135,16 @@ def _maybe_generate_click_keyframes(
         return
     if not result.sheet_paths:
         warnings.append("点击关键帧图未生成：无点击事件。")
-    elif result.warnings:
+        return
+    try:
+        write_analysis_handoff(
+            session_dir,
+            frame_index_path=result.index_json,
+            contact_sheet_paths=result.sheet_paths,
+        )
+    except Exception as exc:
+        warnings.append(f"分析交接清单生成失败：{exc}")
+    if result.warnings:
         warnings.extend(f"点击关键帧图：{warning}" for warning in result.warnings)
 
 

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/journey_semantic_review.schema.json",
+  "title": "游戏历程语义人工复核 v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "source_fingerprint", "reviewed_at", "reviewer", "decisions"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "task_id": {"const": "JOURNEY_SEMANTIC_REVIEW_V1"},
+    "source_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reviewed_at": {"type": "string"},
+    "reviewer": {"type": "string"},
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "decision", "candidate_snapshot", "overrides", "review_note", "save_to_game_profile", "game_term"],
+        "properties": {
+          "event_id": {"type": "string"},
+          "decision": {"type": "string", "enum": ["pending", "confirmed", "excluded"]},
+          "candidate_snapshot": {"type": "object"},
+          "overrides": {"type": "object"},
+          "review_note": {"type": "string"},
+          "save_to_game_profile": {"type": "boolean"},
+          "game_term": {"type": "string"}
+        }
+      }
+    }
+  }
+}

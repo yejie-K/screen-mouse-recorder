@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/confirmed_semantic_events.schema.json",
+  "title": "游戏历程统一确认语义事件 v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "source_fingerprint", "status", "session", "reviewed_at", "reviewer", "summary", "pending_event_ids", "events"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "task_id": {"const": "JOURNEY_CONFIRMED_SEMANTIC_V1"},
+    "source_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "status": {"type": "string", "enum": ["complete", "needs_review"]},
+    "session": {"type": "object"},
+    "reviewed_at": {"type": "string"},
+    "reviewer": {"type": "string"},
+    "summary": {
+      "type": "object",
+      "required": ["event_count", "confirmed_count", "excluded_count", "pending_count"],
+      "properties": {
+        "event_count": {"type": "integer", "minimum": 0},
+        "confirmed_count": {"type": "integer", "minimum": 0},
+        "excluded_count": {"type": "integer", "minimum": 0},
+        "pending_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "pending_event_ids": {"type": "array", "items": {"type": "string"}},
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event_id", "event_name", "event_type", "semantic", "semantic_review"],
+        "properties": {
+          "event_id": {"type": "string"},
+          "event_name": {"type": "string"},
+          "event_type": {"type": "string"},
+          "semantic": {"type": ["object", "null"]},
+          "semantic_review": {
+            "type": "object",
+            "required": ["status", "reviewer", "reviewed_at", "review_note"],
+            "properties": {
+              "status": {"type": "string", "enum": ["pending", "confirmed", "excluded"]},
+              "reviewer": {"type": "string"},
+              "reviewed_at": {"type": "string"},
+              "review_note": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

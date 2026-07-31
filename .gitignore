@@ -1,7 +1,21 @@
 # Local configuration and recordings
 config.json
 sessions/
-AGENTS.md
+
+# Local analysis runs and source-only release archives
+outputs/
+release_packages/
+experiments/
+local_archive/
+.claude/
+.agents/
+
+# Local diagnostics and planning notes
+diag_*.txt
+D_DRIVE_CLEANUP_RECOMMENDATION.md
+
+# Keep the repository's engineering entrypoint versioned
+# AGENTS.md is intentionally not ignored.
 
 # Generated packages and binaries
 *.zip
@@ -9,6 +23,10 @@ AGENTS.md
 *.msi
 dist/
 build/
+
+# The manual review server loads these checked-in static assets directly.
+!tools/manual_frame_review_web/dist/
+!tools/manual_frame_review_web/dist/**
 
 # Generated analysis/export artifacts
 analysis_output/
@@ -27,6 +45,11 @@ drag_durations.png
 
 # Local UI verification screenshots
 design_mockups/ui_actual_*.png
+design_mockups/references/
+design_mockups/render_research_*.py
+design_mockups/render_ui_style_variants.py
+design_mockups/ui_research_*.png
+design_mockups/ui_style_*.png
 
 # Python cache and virtual environments
 __pycache__/
@@ -36,6 +59,13 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+.runtime/
+tools/tessdata/
+**/node_modules/
+.pnpm-store/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
 
 # Local editor and OS files
 .idea/

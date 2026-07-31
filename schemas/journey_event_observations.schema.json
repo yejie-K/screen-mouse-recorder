@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/journey_event_observations.schema.json",
+  "title": "功能事件观察结果 v2.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "source_fingerprint", "status", "scan_scope", "session", "summary", "events", "compatibility"],
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "task_id": {"const": "JOURNEY_EVENT_OBSERVATIONS_V2"},
+    "source_fingerprint": {"type": "string"},
+    "status": {"enum": ["needs_review", "complete"]},
+    "scan_scope": {"enum": ["all_extracted_frames", "debug_subset", "legacy_confirmed_events"]},
+    "session": {"type": "object"},
+    "summary": {"$ref": "#/$defs/summary"},
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["observation_id", "session_id", "time_ms", "timestamp", "source", "evidence", "event_name", "ocr_text", "mode_tag", "event_tag", "region_group_id", "review"],
+        "properties": {
+          "observation_id": {"type": "string", "minLength": 1},
+          "session_id": {"type": "string"},
+          "time_ms": {"type": "integer", "minimum": 0},
+          "timestamp": {"type": "string"},
+          "source": {"enum": ["manual", "automatic", "legacy_v1"]},
+          "evidence": {"type": "object"},
+          "event_name": {"type": "string"},
+          "ocr_text": {"type": "string"},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "ocr_elapsed_seconds": {"type": "number", "minimum": 0},
+          "mode_tag": {"enum": ["PVE", "PVP", "GVG", "系统", "待判断"]},
+          "event_tag": {"enum": ["新玩法", "新副本", "新养成系统", "新技能", "新任务系统", "新社交功能", "新商业功能", "其他开放"]},
+          "region_group_id": {"type": "string"},
+          "last_time_ms": {"type": "integer", "minimum": 0},
+          "occurrence_frame_count": {"type": "integer", "minimum": 1},
+          "review": {"$ref": "#/$defs/review"}
+        }
+      }
+    },
+    "compatibility": {"type": "object"}
+  },
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "required": ["observation_count", "pending", "confirmed", "excluded"],
+      "properties": {
+        "observation_count": {"type": "integer", "minimum": 0},
+        "pending": {"type": "integer", "minimum": 0},
+        "confirmed": {"type": "integer", "minimum": 0},
+        "excluded": {"type": "integer", "minimum": 0}
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reviewer", "reviewed_at", "note"],
+      "properties": {
+        "status": {"enum": ["pending", "confirmed", "excluded"]},
+        "reviewer": {"type": "string"},
+        "reviewed_at": {"type": "string"},
+        "note": {"type": "string"},
+        "legacy_event_review_status": {"enum": ["pending", "confirmed", "excluded"]}
+      }
+    }
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/journey_metric_observations.schema.json",
+  "title": "指标观察结果 v2.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "source_fingerprint", "status", "scan_scope", "session", "summary", "metrics", "compatibility"],
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "task_id": {"const": "JOURNEY_METRIC_OBSERVATIONS_V2"},
+    "source_fingerprint": {"type": "string"},
+    "status": {"enum": ["needs_review", "complete"]},
+    "scan_scope": {"enum": ["all_extracted_frames", "debug_subset", "legacy_confirmed_events"]},
+    "session": {"type": "object"},
+    "summary": {"$ref": "#/$defs/summary"},
+    "metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["observation_id", "session_id", "time_ms", "timestamp", "source", "evidence", "metric_key", "raw_text", "ocr_text", "parsed_value", "unit", "region_id", "review"],
+        "properties": {
+          "observation_id": {"type": "string", "minLength": 1},
+          "session_id": {"type": "string"},
+          "time_ms": {"type": "integer", "minimum": 0},
+          "timestamp": {"type": "string"},
+          "source": {"enum": ["manual", "automatic", "legacy_v1"]},
+          "evidence": {"type": "object"},
+          "metric_key": {"enum": ["combat_power", "level", "level_rebirth", "vip_level", "currency", "unknown"]},
+          "raw_text": {"type": "string"},
+          "ocr_text": {"type": "string"},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "ocr_elapsed_seconds": {"type": "number", "minimum": 0},
+          "parsed_value": {"type": ["number", "integer", "string", "null"]},
+          "parsed_fields": {"type": "object"},
+          "unit": {"type": "string"},
+          "region_id": {"type": "string"},
+          "last_time_ms": {"type": "integer", "minimum": 0},
+          "occurrence_frame_count": {"type": "integer", "minimum": 1},
+          "review": {"$ref": "#/$defs/review"}
+        }
+      }
+    },
+    "compatibility": {"type": "object"}
+  },
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "required": ["observation_count", "pending", "confirmed", "excluded"],
+      "properties": {
+        "observation_count": {"type": "integer", "minimum": 0},
+        "pending": {"type": "integer", "minimum": 0},
+        "confirmed": {"type": "integer", "minimum": 0},
+        "excluded": {"type": "integer", "minimum": 0}
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reviewer", "reviewed_at", "note"],
+      "properties": {
+        "status": {"enum": ["pending", "confirmed", "excluded"]},
+        "reviewer": {"type": "string"},
+        "reviewed_at": {"type": "string"},
+        "note": {"type": "string"},
+        "legacy_event_review_status": {"enum": ["pending", "confirmed", "excluded"]}
+      }
+    }
+  }
+}

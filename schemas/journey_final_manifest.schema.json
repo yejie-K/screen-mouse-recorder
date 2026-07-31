@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/journey_final_manifest.schema.json",
+  "title": "游戏历程拆解正式产物清单 v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "status", "created_at", "session", "inputs", "outputs"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "task_id": {"const": "JOURNEY_FINAL_PRODUCT_V1"},
+    "status": {"const": "complete"},
+    "created_at": {"type": "string", "minLength": 1},
+    "session": {"type": "object"},
+    "inputs": {"type": "object"},
+    "outputs": {"type": "object"}
+  }
+}

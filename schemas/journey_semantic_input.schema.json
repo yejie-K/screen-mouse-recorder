@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/journey_semantic_input.schema.json",
+  "title": "游戏历程语义补全输入 v1.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "source_fingerprint", "rule_versions", "session", "events"],
+  "properties": {
+    "schema_version": {"const": "1.1"},
+    "task_id": {"const": "JOURNEY_SEMANTIC_V1"},
+    "source_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "rule_versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gameplay", "emotion"],
+      "properties": {
+        "gameplay": {"type": "string"},
+        "emotion": {"type": "string"}
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session_id", "confirmed_at", "duration_ms", "total_play_time_ms", "virtual_day_minutes", "virtual_day_count", "event_count", "event_type_counts"],
+      "properties": {
+        "session_id": {"type": "string", "minLength": 1},
+        "confirmed_at": {"type": "string"},
+        "duration_ms": {"type": "integer", "minimum": 0},
+        "total_play_time_ms": {"type": "integer", "minimum": 0},
+        "virtual_day_minutes": {"const": 60},
+        "virtual_day_count": {"type": "integer", "minimum": 1},
+        "event_count": {"type": "integer", "minimum": 1},
+        "event_type_counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+      }
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "session_id", "time_ms", "video_time_ms", "global_time_ms", "play_day_index", "day_time_ms", "timestamp", "event_type", "event_name", "ocr_excerpt", "evidence", "deterministic_hints"],
+        "properties": {
+          "event_id": {"type": "string", "minLength": 1},
+          "session_id": {"type": "string", "minLength": 1},
+          "time_ms": {"type": "integer", "minimum": 0},
+          "video_time_ms": {"type": "integer", "minimum": 0},
+          "global_time_ms": {"type": "integer", "minimum": 0},
+          "play_day_index": {"type": "integer", "minimum": 1},
+          "day_time_ms": {"type": "integer", "minimum": 0, "exclusiveMaximum": 3600000},
+          "timestamp": {"type": "string", "minLength": 1},
+          "event_type": {"type": "string", "minLength": 1},
+          "event_name": {"type": "string", "minLength": 1},
+          "ocr_excerpt": {"type": "string"},
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source_image", "review_image", "contact_sheet", "sheet_row", "sheet_col"],
+            "properties": {
+              "source_image": {"type": "string"},
+              "review_image": {"type": "string"},
+              "contact_sheet": {"type": "string"},
+              "sheet_row": {"type": ["integer", "null"]},
+              "sheet_col": {"type": ["integer", "null"]}
+            }
+          },
+          "deterministic_hints": {
+            "type": "object",
+            "required": ["matched_gameplay_rule_ids", "classification", "suggested_emotion_rule_ids"],
+            "properties": {
+              "matched_gameplay_rule_ids": {"type": "array", "items": {"type": "string"}},
+              "classification": {"type": "object"},
+              "suggested_emotion_rule_ids": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
+    }
+  }
+}

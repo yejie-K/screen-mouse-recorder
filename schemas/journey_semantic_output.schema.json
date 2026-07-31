@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/journey_semantic_output.schema.json",
+  "title": "游戏历程语义补全输出 v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "source_fingerprint", "event_annotations", "review_items", "blocked_items"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "task_id": {"const": "JOURNEY_SEMANTIC_V1"},
+    "source_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "event_annotations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "event_category", "object_scope", "interaction_mode", "gameplay_form", "rhythm_category", "player_action", "system_feedback", "matched_gameplay_rule_ids", "matched_emotion_rule_ids", "repeat_group_key", "repeat_index", "has_new_value", "output_relations", "confidence", "review_status"],
+        "properties": {
+          "event_id": {"type": "string"},
+          "tags": {"type": "array", "maxItems": 24, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 32}},
+          "mode_tag": {"type": "string", "enum": ["PVE", "PVP", "GVG", "系统", "待判断"]},
+          "event_tag": {"type": "string", "enum": ["新玩法", "新副本", "新养成系统", "新技能", "新任务系统", "新社交功能", "新商业功能", "其他开放"]},
+          "event_category": {"type": "string"},
+          "object_scope": {"type": "array", "items": {"type": "string"}},
+          "interaction_mode": {"type": "array", "items": {"type": "string"}},
+          "gameplay_form": {"type": "array", "items": {"type": "string"}},
+          "rhythm_category": {"type": "array", "items": {"type": "string"}},
+          "player_action": {"type": "string"},
+          "system_feedback": {"type": "string"},
+          "matched_gameplay_rule_ids": {"type": "array", "items": {"type": "string"}},
+          "matched_emotion_rule_ids": {"type": "array", "items": {"type": "string"}},
+          "repeat_group_key": {"type": "string"},
+          "repeat_index": {"type": "integer", "minimum": 1},
+          "has_new_value": {"type": "boolean"},
+          "creative_high_value": {"type": "boolean"},
+          "emotion_score_candidate": {"type": ["integer", "null"], "minimum": -2, "maximum": 3},
+          "emotion_reason": {"type": "string"},
+          "output_relations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["relation_type", "output_category", "output_name", "display_value", "evidence_event_ids"],
+              "properties": {
+                "relation_type": {"type": "string", "enum": ["产出", "消耗", "解锁", "强化", "推动", "其他"]},
+                "output_category": {"type": "string"},
+                "output_name": {"type": "string"},
+                "display_value": {"type": "string"},
+                "evidence_event_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+              }
+            }
+          },
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "review_status": {"type": "string", "enum": ["needs_review", "excluded"]}
+        }
+      }
+    },
+    "review_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event_id", "reason", "suggested_action"],
+        "properties": {
+          "event_id": {"type": "string"},
+          "reason": {"type": "string"},
+          "suggested_action": {"type": "string"}
+        }
+      }
+    },
+    "blocked_items": {"type": "array", "items": {"type": "string"}}
+  }
+}

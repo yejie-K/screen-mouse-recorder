@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://screen-mouse-recorder.local/schemas/event_ocr_results.schema.json",
+  "title": "OCR Event Results",
+  "description": "Structured OCR event output produced from manually selected keyframes.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "workflow",
+    "source",
+    "events"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "workflow": {
+      "type": "string",
+      "const": "manual_selected_frame_ocr"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "video",
+        "index_json",
+        "selection_json",
+        "ocr_engine",
+        "ocr_engine_version"
+      ],
+      "properties": {
+        "video": {
+          "type": "string"
+        },
+        "index_json": {
+          "type": "string"
+        },
+        "selection_json": {
+          "type": "string"
+        },
+        "ocr_engine": {
+          "type": "string"
+        },
+        "ocr_engine_version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    }
+  },
+  "$defs": {
+    "event": {
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "event_name",
+        "timestamp",
+        "seconds",
+        "frame_index",
+        "source_frame",
+        "source_video",
+        "contact_sheet",
+        "contact_sheet_tile",
+        "sheet_row",
+        "sheet_col",
+        "ocr_text",
+        "ocr_time_text",
+        "time_source",
+        "time_check",
+        "confidence",
+        "review_status",
+        "review_image",
+        "ocr_elapsed_seconds",
+        "notes"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "event_type": {
+          "type": "string"
+        },
+        "event_name": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 24,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 32}
+        },
+        "observation_lane": {
+          "type": "string",
+          "enum": ["event", "metric"]
+        },
+        "mode_tag": {
+          "type": "string",
+          "enum": ["PVE", "PVP", "GVG", "系统", "待判断"]
+        },
+        "event_tag": {
+          "type": "string",
+          "enum": ["新玩法", "新副本", "新养成系统", "新技能", "新任务系统", "新社交功能", "新商业功能", "其他开放"]
+        },
+        "metric_key": {
+          "type": "string",
+          "enum": ["combat_power", "level", "level_rebirth", "vip_level", "currency", "unknown"]
+        },
+        "selection_source": {
+          "type": "string",
+          "enum": ["manual", "automatic"]
+        },
+        "region_id": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "frame_index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_frame": {
+          "type": "string"
+        },
+        "source_video": {
+          "type": "string"
+        },
+        "contact_sheet": {
+          "type": "string"
+        },
+        "contact_sheet_tile": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sheet_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sheet_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ocr_text": {
+          "type": "string"
+        },
+        "ocr_time_text": {
+          "type": "string"
+        },
+        "time_source": {
+          "type": "string",
+          "enum": [
+            "index_json",
+            "source_metadata",
+            "ocr"
+          ]
+        },
+        "time_check": {
+          "type": "string",
+          "enum": [
+            "matched",
+            "ocr_missing",
+            "ocr_mismatch",
+            "fallback_from_ocr",
+            "not_checked"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "review_status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "needs_review",
+            "confirmed",
+            "corrected",
+            "rejected"
+          ]
+        },
+        "review_image": {
+          "type": "string"
+        },
+        "ocr_elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "notes": {
+          "type": "string"
+        },
+        "ocr_items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "text",
+              "confidence",
+              "box"
+            ],
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "box": {
+                "oneOf": [
+                  {
+                    "type": "array",
+                    "prefixItems": [
+                      { "type": "integer" },
+                      { "type": "integer" },
+                      { "type": "integer" },
+                      { "type": "integer" }
+                    ],
+                    "minItems": 4,
+                    "maxItems": 4
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

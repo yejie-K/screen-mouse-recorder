@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/journey_run_prepare_report.schema.json",
+  "title": "历程工作空间准备报告 v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "status", "elapsed_seconds", "preflight", "contact_sheets", "workspace", "stages"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "task_id": {"const": "JOURNEY_RUN_PREPARE_V1"},
+    "status": {"const": "ready"},
+    "elapsed_seconds": {"type": "number", "minimum": 0},
+    "preflight": {"type": "string", "minLength": 1},
+    "contact_sheets": {"type": "object"},
+    "workspace": {"type": "string", "minLength": 1},
+    "stages": {"type": "object"}
+  }
+}

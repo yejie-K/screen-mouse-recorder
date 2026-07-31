@@ -5,6 +5,7 @@
 - Product: Screen Mouse Recorder.
 - Target user: 需要长时间录制屏幕区域、采集鼠标行为，并把数据导出为 xlsx / 图表进行人工分析的人。
 - Target surface: Windows Tkinter 桌面应用，当前包含“录制”和“分析处理”两个主页面。
+- Secondary review surface: 历程语义确认使用 `tools/` 启动的 localhost 浏览器工作台，不嵌入 `app.py`，也不改变录屏主流程。
 - Primary job-to-be-done: 快速可靠地完成一次录制；录制结束后自动生成可读的行为分析输出。分析页只作为已有 xlsx/session 的补处理工具。
 - Success criteria: 用户 1 分钟内能开始录制；用户能明确知道当前状态、输出位置、自动分析是否完成、生成了哪些关键文件；分析页能让旧数据或未自动出图的数据快速补生成报告和图片。
 - Content/data that must appear: 录制时长、区域状态、FFmpeg 状态、输出目录、记录选项、session 摘要、导入源、事件数、采样数、点击数、分析输出文件。
@@ -139,6 +140,10 @@
 
 - Spacing scale: 4, 6, 8, 12, 14, 16, 18, 24px.
 - Container width: Default window stays near `1120x760`; minimum no lower than current `1080x720` unless layout is reworked.
+- Localhost review workbenches share one fixed shell contract from `tools/workspace_shell.css`: `1100px` minimum canvas, `64px` header, `54px` toolbar, `220px` brand area, `390px` navigation area, `15px/1.5` base type, and `36px` navigation/action controls.
+- Review workbench columns never reflow between pages: every page uses `280px / minmax(420px, 1fr) / 380px`. Narrow windows keep this skeleton and use page scrolling; they do not hide controls, change column widths, or collapse into one column.
+- Cross-page navigation must begin at the same x-coordinate for a given viewport. Page titles may truncate with ellipsis, but controls and labels must never overflow their boxes.
+- The fixed header exposes one shared Session selector on every localhost review page. It switches a validated complete workspace, never an isolated MP4 or arbitrary filesystem path; unprepared raw sessions remain visible but disabled.
 - Grid:
   - 录制页：流程 / 控制 / 设置 三栏。
 - 分析页：导入 / 数据检查 / 生成输出 自上而下；不铺大面积图表预览，除非用于确认刚生成的关键图。

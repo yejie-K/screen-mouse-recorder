@@ -30,6 +30,12 @@ from .models import (
     VideoInfo,
 )
 from .planner import build_frame_plan, estimate_sampling
+from .presets import (
+    CLICK_SUMMARY_POLICY_ID,
+    CLICK_SUMMARY_SILENT_INTERVAL_SECONDS,
+    build_click_summary_config,
+    click_summary_policy,
+)
 from .renderer import _compose_sheet, _crop_and_resize, _draw_click_marker, _prepare_frame_image
 from .service import (
     default_output_dir,
@@ -42,6 +48,8 @@ from .timecode import format_timecode, parse_timecode
 
 __all__ = [
     "ClickKeyframeConfig",
+    "CLICK_SUMMARY_POLICY_ID",
+    "CLICK_SUMMARY_SILENT_INTERVAL_SECONDS",
     "ClickKeyframeEstimate",
     "ClickKeyframeEvent",
     "ClickKeyframeResult",
@@ -64,8 +72,10 @@ __all__ = [
     "_nearest_click_marker",
     "_prepare_frame_image",
     "build_click_keyframe_plan",
+    "build_click_summary_config",
     "build_click_keyframe_visual_signatures",
     "build_frame_plan",
+    "click_summary_policy",
     "default_output_dir",
     "estimate_sampling",
     "estimate_click_keyframe_sampling",

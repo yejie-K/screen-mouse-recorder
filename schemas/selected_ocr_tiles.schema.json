@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://screen-mouse-recorder.local/schemas/selected_ocr_tiles.schema.json",
+  "title": "Selected OCR Tiles",
+  "description": "Manual keyframe selections for the OCR event extraction workflow.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "selections"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "source_index": {
+      "type": "string"
+    },
+    "source_video": {
+      "type": "string"
+    },
+    "selections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "tile_index"
+        ],
+        "properties": {
+          "sheet": {
+            "type": "string"
+          },
+          "tile_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "note": {
+            "type": "string"
+          },
+          "source_frame": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

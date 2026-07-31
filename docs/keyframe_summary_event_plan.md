@@ -35,7 +35,7 @@ Click frames remain the main structure. Silent gap frames are only a coverage gu
 3. Add visual-change frames only inside repeated clusters to avoid losing state transitions.
 4. Add silent-gap compensation frames after dedupe when no click frame covers a long interval.
 
-Default experimental values:
+Official `CLICK_SUMMARY_V1` values:
 
 - Cluster time: `1.5s`
 - Cluster distance: `80px`
@@ -44,7 +44,7 @@ Default experimental values:
 - Long silent gap threshold: `25s`
 - Max silent frames per gap: `5`
 
-These values are internal defaults for the summary strategy. The normal UI should expose the result and generation controls, not the dedupe thresholds.
+These values are the single production preset shared by recorder auto-report and analyzer fallback generation. The normal UI exposes the result and generation state, not a second set of dedupe thresholds.
 
 ## Coverage Metrics
 
@@ -66,3 +66,5 @@ The first practical success condition is:
 ## OCR Exploration
 
 OCR is secondary. It should be tested on a small set of generated frames only. The first OCR goal is to identify whether common title/task/reward text can be extracted reliably enough to help label events; it should not block the keyframe summary pipeline.
+
+The accepted manual-selection OCR contract is documented in `docs/ocr_manual_event_workflow.md`. Use that document as the source of truth for AI-readable event JSON, time-source priority, and review return markers.

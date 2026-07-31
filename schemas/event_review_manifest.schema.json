@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/event_review_manifest.schema.json",
+  "title": "功能事件复核包清单 v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "status", "session_id", "upstream", "review_source_fingerprint", "event_count", "files"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "task_id": {"const": "JOURNEY_EVENT_REVIEW_BUNDLE_V2"},
+    "status": {"enum": ["needs_review", "complete"]},
+    "session_id": {"type": "string", "minLength": 1},
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "schema_version", "task_id", "source_fingerprint"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "schema_version": {"const": "2.0"},
+        "task_id": {"const": "JOURNEY_EVENT_OBSERVATIONS_V2"},
+        "source_fingerprint": {"type": "string", "minLength": 1}
+      }
+    },
+    "review_source_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "event_count": {"type": "integer", "minimum": 1},
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["semantic_input", "semantic_output", "semantic_review", "confirmed_events"],
+      "properties": {
+        "semantic_input": {"$ref": "#/$defs/file"},
+        "semantic_output": {"$ref": "#/$defs/file"},
+        "semantic_review": {"$ref": "#/$defs/file"},
+        "confirmed_events": {"$ref": "#/$defs/file"}
+      }
+    }
+  },
+  "$defs": {
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "schema_version"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "schema_version": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 from typing import Any
 
 from PIL import Image
@@ -75,6 +76,7 @@ def select_click_keyframes_with_stats(
     visual_threshold = max(0.0, float(config.visual_change_threshold))
     tail_min_size = max(2, int(config.cluster_tail_min_size))
     tail_min_duration = max(0.0, float(config.cluster_tail_min_duration_seconds))
+    visual_signature_frames = sum(len(cluster) for cluster in clusters if len(cluster) > 2)
 
     for cluster_index, cluster in enumerate(clusters, start=1):
         cluster_size = len(cluster)
@@ -150,6 +152,7 @@ def select_click_keyframes_with_stats(
         "clusters_total": len(clusters),
         "repeated_clusters": repeated_clusters,
         "visual_change_kept": visual_kept,
+        "visual_signature_frames": visual_signature_frames if visual_threshold > 0 else 0,
         "cluster_tail_kept": cluster_tail_kept,
         "cluster_time_seconds": max(0.0, float(config.time_dedupe_seconds)),
         "cluster_distance_px": max(0.0, float(config.distance_dedupe_px)),
@@ -159,6 +162,7 @@ def select_click_keyframes_with_stats(
         "visual_sample_size": max(8, int(config.visual_sample_size)),
         "visual_crop_radius_px": max(0, int(config.visual_crop_radius_px)),
         "max_frames": max(0, int(config.max_frames)),
+        "cap_strategy": "uniform_timeline" if cap_skipped else "none",
         "selection_reason_counts": _selection_reason_counts(reasons_by_event_id),
     }
     return ClickKeyframeSelection(
@@ -177,9 +181,11 @@ def build_click_keyframe_visual_signatures(
     video_info: VideoInfo,
     ffmpeg: str,
     progress: ProgressCallback | None = None,
+    *,
+    frame_cache: dict[str, Path] | None = None,
+    frame_cache_dir: Path | None = None,
 ) -> dict[str, ClickVisualSignature]:
-    clusters = _cluster_click_keyframe_events(events, config)
-    events_to_sample = [event for cluster in clusters if len(cluster) > 2 for event in cluster]
+    events_to_sample = _visual_signature_events(events, config)
     signatures: dict[str, ClickVisualSignature] = {}
     total = len(events_to_sample)
     if not total or float(config.visual_change_threshold) <= 0:
@@ -192,9 +198,28 @@ def build_click_keyframe_visual_signatures(
         image = _extract_frame(ffmpeg, config.video_path, seconds)
         try:
             signatures[event.event_id] = _click_visual_signature(image, event, config)
+            if frame_cache is not None and frame_cache_dir is not None:
+                frame_cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_path = frame_cache_dir / f"frame_{index:06d}.jpg"
+                image.save(cache_path, "JPEG", quality=92, optimize=False)
+                frame_cache[event.event_id] = cache_path
         finally:
             image.close()
     return signatures
+
+
+def _visual_signature_events(
+    events: list[ClickKeyframeEvent],
+    config: ClickKeyframeConfig,
+) -> list[ClickKeyframeEvent]:
+    if float(config.visual_change_threshold) <= 0:
+        return []
+    return [
+        event
+        for cluster in _cluster_click_keyframe_events(events, config)
+        if len(cluster) > 2
+        for event in cluster
+    ]
 
 def _cluster_click_keyframe_events(
     events: list[ClickKeyframeEvent],
@@ -226,7 +251,13 @@ def _apply_click_keyframe_cap(
     max_frames = max(0, int(config.max_frames))
     if not max_frames or len(events) <= max_frames:
         return events, 0
-    return events[:max_frames], len(events) - max_frames
+    if max_frames == 1:
+        selected = [events[len(events) // 2]]
+    else:
+        last_index = len(events) - 1
+        indices = [round(position * last_index / (max_frames - 1)) for position in range(max_frames)]
+        selected = [events[index] for index in indices]
+    return selected, len(events) - len(selected)
 
 def _selection_reason_counts(reasons_by_event_id: dict[str, str]) -> dict[str, int]:
     counts: dict[str, int] = {}
@@ -254,6 +285,8 @@ def _add_silent_gap_keyframes(
     sorted_events = sorted(events, key=lambda event: (event.seconds, event.source_index))
     long_gap_threshold = max(gap_threshold, float(config.silent_long_gap_seconds))
     max_per_gap = max(1, int(config.silent_max_frames_per_gap))
+    frame_cap = max(0, int(config.max_frames))
+    remaining_budget = max(0, frame_cap - len(sorted_events)) if frame_cap else None
     added: list[ClickKeyframeEvent] = []
     gaps_total = 0
 
@@ -271,11 +304,15 @@ def _add_silent_gap_keyframes(
         anchors.append((0.0, video_info.duration_seconds))
 
     for start, end in anchors:
+        if remaining_budget is not None and remaining_budget <= 0:
+            break
         gap = max(0.0, end - start)
         if gap < gap_threshold:
             continue
         gaps_total += 1
         count = min(max_per_gap, max(1, math.ceil(gap / gap_threshold) - 1))
+        if remaining_budget is not None:
+            count = min(count, remaining_budget)
         positions = (
             [start + gap / 2]
             if count == 1
@@ -295,6 +332,8 @@ def _add_silent_gap_keyframes(
             selection.reasons_by_event_id[event_id] = "silent_gap"
             selection.cluster_by_event_id[event_id] = 0
             selection.cluster_size_by_event_id[event_id] = 0
+        if remaining_budget is not None:
+            remaining_budget -= count
 
     combined = sorted(sorted_events + added, key=lambda event: (event.seconds, event.source_index, event.event_id))
     selection.stats["silent_gap_enabled"] = True
@@ -427,7 +466,8 @@ def _click_visual_signature(
 
 def _downsample_pixels(image: Image.Image, sample_size: int) -> tuple[int, ...]:
     sampled = image.resize((sample_size, sample_size), Image.Resampling.BILINEAR)
-    return tuple(int(value) for value in sampled.getdata())
+    pixels = sampled.get_flattened_data() if hasattr(sampled, "get_flattened_data") else sampled.getdata()
+    return tuple(int(value) for value in pixels)
 
 def _visual_signature_difference(
     previous: ClickVisualSignature,

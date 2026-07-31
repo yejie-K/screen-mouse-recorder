@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import time
 
 from PIL import Image
@@ -10,6 +11,7 @@ from .click_keyframes import (
     _add_silent_gap_keyframes,
     _frame_overlay_config,
     _nearest_click_marker,
+    _visual_signature_events,
     build_click_keyframe_plan,
     build_click_keyframe_visual_signatures,
     load_click_keyframe_events,
@@ -134,7 +136,11 @@ def estimate_click_keyframe_sampling(config: ClickKeyframeConfig) -> ClickKeyfra
     selection = select_click_keyframes_with_stats(events, config)
     frames_per_sheet = max(1, int(config.sheet_cols) * int(config.sheet_rows))
     sheet_count = (len(selection.events) + frames_per_sheet - 1) // frames_per_sheet if selection.events else 0
-    estimated_seconds = max(1, len(selection.events)) * 0.3
+    visual_signature_frames = int(selection.stats.get("visual_signature_frames") or 0)
+    signature_ids = {event.event_id for event in _visual_signature_events(events, config)}
+    cached_frame_reuses = sum(1 for event in selection.events if event.event_id in signature_ids)
+    estimated_frame_extractions = len(selection.events) + visual_signature_frames - cached_frame_reuses
+    estimated_seconds = max(1, estimated_frame_extractions) * 0.3
     return ClickKeyframeEstimate(
         events_total=len(events),
         events_kept=len(selection.events),
@@ -142,6 +148,11 @@ def estimate_click_keyframe_sampling(config: ClickKeyframeConfig) -> ClickKeyfra
         sheet_count=sheet_count,
         frames_per_sheet=frames_per_sheet,
         estimated_processing_seconds=estimated_seconds,
+        visual_signature_frames=visual_signature_frames,
+        cached_frame_reuses=cached_frame_reuses,
+        estimated_frame_extractions=estimated_frame_extractions,
+        timeline_start_seconds=events[0].seconds if events else 0.0,
+        timeline_end_seconds=events[-1].seconds if events else 0.0,
     )
 
 
@@ -168,7 +179,17 @@ def generate_click_keyframe_sheets(
     _cleanup_click_keyframe_outputs(output_dir, config.output_basename)
 
     events = load_click_keyframe_events(config)
-    visual_signatures = build_click_keyframe_visual_signatures(events, config, video_info, ffmpeg, progress)
+    frame_cache_temp = TemporaryDirectory(prefix="click_frame_cache_", dir=output_dir)
+    frame_cache: dict[str, Path] = {}
+    visual_signatures = build_click_keyframe_visual_signatures(
+        events,
+        config,
+        video_info,
+        ffmpeg,
+        progress,
+        frame_cache=frame_cache,
+        frame_cache_dir=Path(frame_cache_temp.name),
+    )
     selection = select_click_keyframes_with_stats(events, config, visual_signatures)
     selected = selection.events
     skipped = selection.skipped_count
@@ -183,6 +204,7 @@ def generate_click_keyframe_sheets(
             warnings=["无点击事件"],
             selection_stats=selection.stats,
         )
+        frame_cache_temp.cleanup()
         return ClickKeyframeResult(output_dir, [], index_json, len(events), 0, skipped, ["无点击事件"])
 
     valid_events = []
@@ -197,9 +219,11 @@ def generate_click_keyframe_sheets(
     if not plan:
         index_json = output_dir / f"{config.output_basename}_index.json"
         _write_click_keyframe_index_json(index_json, [], [], len(events), skipped, warnings, selection_stats=selection.stats)
+        frame_cache_temp.cleanup()
         return ClickKeyframeResult(output_dir, [], index_json, len(events), 0, skipped, warnings)
 
     sheet_paths: list[Path] = []
+    cache_reuses = 0
     frames_per_sheet = max(1, int(config.sheet_cols) * int(config.sheet_rows))
     total = len(plan)
     for sheet_offset in range(0, total, frames_per_sheet):
@@ -208,7 +232,13 @@ def generate_click_keyframe_sheets(
         for entry in sheet_entries:
             if progress:
                 progress(entry.index, total, f"关键帧 {entry.timestamp}")
-            image = _extract_frame(ffmpeg, config.video_path, entry.seconds)
+            cache_path = frame_cache.get(entry.event_id)
+            if cache_path is not None:
+                with Image.open(cache_path) as cached:
+                    image = cached.convert("RGB")
+                cache_reuses += 1
+            else:
+                image = _extract_frame(ffmpeg, config.video_path, entry.seconds)
             marker = None
             if config.draw_click_markers and entry.click_x is not None and entry.click_y is not None:
                 marker = ClickMarker(entry.seconds, entry.click_x, entry.click_y)
@@ -226,8 +256,11 @@ def generate_click_keyframe_sheets(
             thumb.close()
         sheet_image.close()
 
+    selection.stats["frame_cache_reuses"] = cache_reuses
+    selection.stats["actual_frame_extractions"] = len(visual_signatures) + total - cache_reuses
     index_json = output_dir / f"{config.output_basename}_index.json"
     _write_click_keyframe_index_json(index_json, plan, sheet_paths, len(events), skipped, warnings, selection_stats=selection.stats)
+    frame_cache_temp.cleanup()
     if progress:
         progress(total, total, "完成")
     return ClickKeyframeResult(output_dir, sheet_paths, index_json, len(events), len(plan), skipped, warnings)

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>功能事件复核</title>
+  <link rel="stylesheet" href="/events/styles.css">
+  <link rel="stylesheet" href="/workspace-shell.css">
+</head>
+<body class="workspace-shell-body">
+  <header class="app-header workspace-shell-header">
+    <div class="workspace-shell-brand">
+      <span class="workspace-shell-brand__mark">历</span>
+      <div class="workspace-shell-brand__copy">
+        <strong>历程拆解</strong>
+        <span>Journey Review</span>
+      </div>
+    </div>
+    <nav class="workflow-nav workspace-shell-nav" aria-label="分析流程">
+      <a href="/manual/">人工选帧</a>
+      <a href="/regions/">区域校准</a>
+      <a class="active" href="/events/" aria-current="page">功能事件</a>
+      <a href="/metrics/">指标结果</a>
+    </nav>
+    <div class="workspace-shell-context">
+      <div class="workspace-shell-page">
+        <strong id="game-title">功能事件复核</strong>
+        <select class="workspace-shell-session" aria-label="切换Session"><option>加载Session...</option></select>
+        <span id="session-label" hidden></span>
+      </div>
+      <label class="reviewer-field">
+        <span>复核人</span>
+        <input id="reviewer" autocomplete="name" placeholder="必填">
+      </label>
+    </div>
+  </header>
+
+  <div class="toolbar workspace-shell-toolbar">
+    <div class="filter-group" role="tablist" aria-label="事件筛选">
+      <button class="filter active" data-filter="flagged">重点复核</button>
+      <button class="filter" data-filter="pending">待复核</button>
+      <button class="filter" data-filter="confirmed">已确认</button>
+      <button class="filter" data-filter="excluded">已排除</button>
+      <button class="filter" data-filter="all">全部</button>
+    </div>
+    <input id="search" class="search" type="search" placeholder="搜索事件或OCR文字">
+    <button id="bulk-confirm" class="button secondary">批量确认当前筛选</button>
+    <div id="summary" class="summary workspace-shell-summary" aria-label="复核进度"></div>
+  </div>
+
+  <main class="workspace workspace-shell-main">
+    <aside class="event-pane" aria-label="事件列表">
+      <div id="event-count" class="pane-heading"></div>
+      <div id="event-list" class="event-list"></div>
+    </aside>
+
+    <section class="evidence-pane">
+      <div class="event-heading">
+        <div>
+          <div id="event-kicker" class="kicker"></div>
+          <h2 id="event-name">选择一个事件</h2>
+        </div>
+        <span id="event-status" class="status-badge"></span>
+      </div>
+      <div id="review-alerts" class="review-alerts"></div>
+      <figure class="evidence-figure">
+        <img id="evidence-image" alt="事件证据截图">
+        <div id="evidence-empty" class="evidence-empty">没有可用证据图</div>
+      </figure>
+      <details class="ocr-details">
+        <summary>OCR 原文</summary>
+        <p id="ocr-text"></p>
+      </details>
+    </section>
+
+    <section class="review-pane">
+      <div class="review-scroll">
+        <div id="profile-match" class="profile-match"></div>
+
+        <div class="form-section tag-editor">
+          <div class="tag-group">
+            <div class="field-heading"><span class="field-label">玩法模式</span></div>
+            <div id="mode-options" class="tag-options"></div>
+          </div>
+          <div class="tag-group">
+            <div class="field-heading"><span class="field-label">开放内容</span></div>
+            <div id="event-options" class="tag-options"></div>
+          </div>
+        </div>
+
+        <div class="form-section profile-controls">
+          <label class="check-line">
+            <input id="save-profile" type="checkbox">
+            <span>加入本游戏标签词典</span>
+          </label>
+          <input id="game-term" placeholder="游戏内术语">
+        </div>
+
+        <label class="form-section">
+          <span class="field-label">复核备注</span>
+          <textarea id="review-note" rows="3" placeholder="记录修正依据或排除原因"></textarea>
+        </label>
+      </div>
+
+      <div class="review-footer">
+        <div id="message" class="message" role="status"></div>
+        <div class="action-bar">
+          <button id="mark-pending" class="button quiet">保留待复核</button>
+          <button id="exclude" class="button danger">排除</button>
+          <button id="confirm" class="button primary">确认并保存</button>
+        </div>
+        <div class="pager">
+          <button id="previous" class="button quiet">上一条</button>
+          <span id="position"></span>
+          <button id="next" class="button quiet">下一条</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/workspace-shell.js"></script>
+  <script src="/events/app.js"></script>
+</body>
+</html>

@@ -111,6 +111,11 @@ class ClickKeyframeEstimate:
     sheet_count: int
     frames_per_sheet: int
     estimated_processing_seconds: float
+    visual_signature_frames: int = 0
+    cached_frame_reuses: int = 0
+    estimated_frame_extractions: int = 0
+    timeline_start_seconds: float = 0.0
+    timeline_end_seconds: float = 0.0
 
 
 @dataclass(slots=True)

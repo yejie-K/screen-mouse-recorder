@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCR区域复核</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/regions/styles.css">
+  <link rel="stylesheet" href="/workspace-shell.css">
+</head>
+<body class="workspace-shell-body">
+  <header class="app-header workspace-shell-header">
+    <div class="workspace-shell-brand">
+      <span class="workspace-shell-brand__mark">历</span>
+      <div class="workspace-shell-brand__copy">
+        <strong>历程拆解</strong>
+        <span>Journey Review</span>
+      </div>
+    </div>
+    <nav class="workflow-nav workspace-shell-nav" aria-label="分析流程">
+      <a href="/manual/">人工选帧</a>
+      <a class="active" href="/regions/" aria-current="page">区域校准</a>
+      <a href="/events/">功能事件</a>
+      <a href="/metrics/">指标结果</a>
+    </nav>
+    <div class="workspace-shell-context">
+      <div class="workspace-shell-page">
+        <strong id="title">OCR区域复核</strong>
+        <select class="workspace-shell-session" aria-label="切换Session"><option>加载Session...</option></select>
+        <span id="profile-status" hidden></span>
+      </div>
+      <label class="reviewer-field"><span>复核人</span><input id="reviewer" placeholder="必填"></label>
+    </div>
+  </header>
+
+  <div class="toolbar workspace-shell-toolbar">
+    <div class="stage-copy">
+      <strong>区域校准</strong>
+      <span id="calibration-progress">等待加载</span>
+    </div>
+    <div class="stage-track" aria-label="当前步骤">
+      <span class="active">框选</span><i></i><span>测试</span><i></i><span>确认</span>
+    </div>
+    <div id="summary" class="summary workspace-shell-summary"></div>
+  </div>
+
+  <div id="scan-panel" class="scan-panel" hidden>
+    <div>
+      <strong id="scan-title">区域已就绪</strong>
+      <span id="scan-status">等待扫描</span>
+    </div>
+    <div class="scan-control">
+      <div class="scan-meter">
+        <progress id="scan-progress" max="1" value="0"></progress>
+      </div>
+      <button id="start-scan" class="button secondary">开始全量扫描</button>
+      <a id="scan-next" class="button primary link-button" href="/metrics/" hidden>进入指标复核</a>
+    </div>
+  </div>
+
+  <main class="workspace workspace-shell-main">
+    <aside class="region-pane">
+      <div class="pane-heading">
+        <div><strong>区域队列</strong><span id="region-count"></span></div>
+        <button id="add-metric" class="add-region" title="新增校准区域" aria-label="新增校准区域">+</button>
+      </div>
+      <div class="region-tools">
+        <div class="filter-group" role="tablist" aria-label="区域筛选">
+          <button class="filter active" data-filter="needs_review">待处理</button>
+          <button class="filter" data-filter="confirmed">已处理</button>
+          <button class="filter" data-filter="all">全部</button>
+        </div>
+        <input id="search" class="search" type="search" placeholder="搜索区域">
+      </div>
+      <div id="region-list"></div>
+    </aside>
+
+    <section class="evidence-pane">
+      <div class="region-heading">
+        <div><h2 id="region-name">选择一个区域</h2><div id="region-kicker" class="kicker"></div></div>
+        <span id="region-status" class="status-badge"></span>
+      </div>
+      <div id="blockers" class="blockers"></div>
+      <div class="source-stage">
+        <div id="source-wrap" class="source-wrap">
+          <img id="source-image" alt="区域来源帧">
+          <div id="region-overlay" class="region-overlay" aria-label="当前OCR区域"></div>
+        </div>
+        <div id="source-empty" class="empty">没有来源帧</div>
+      </div>
+      <div class="source-library-row">
+        <select id="source-library" aria-label="人工帧库"></select>
+      </div>
+      <div id="source-picker" class="source-picker" aria-label="代表帧"></div>
+      <div class="sample-band">
+        <div class="crop-preview"><span>选区预览</span><img id="preview-image" alt="区域裁剪预览"></div>
+        <div class="ocr-samples"><strong>识别样本</strong><div id="sample-texts" class="sample-results"></div></div>
+      </div>
+    </section>
+
+    <section class="review-pane">
+      <div class="review-scroll">
+        <div class="editor-section">
+          <span class="section-label">识别内容</span>
+          <div class="kind-toggle" role="group" aria-label="识别内容">
+            <button type="button" data-kind="metric">数值指标</button>
+            <button type="button" data-kind="event">功能事件</button>
+          </div>
+          <select id="region-kind" hidden><option value="metric">指标</option><option value="event">功能事件</option></select>
+        </div>
+        <label class="form-row compact"><span>区域名称</span><input id="scene-hint"></label>
+        <div id="metric-fields" class="form-row compact">
+          <label><span>指标类型</span><select id="metric-key"></select></label>
+        </div>
+        <div id="metric-suggestion" class="metric-suggestion">
+          <button id="suggest-metric" class="button secondary" type="button">测试识别</button>
+          <span id="suggestion-result"></span>
+        </div>
+        <div id="event-fields">
+          <label class="form-row compact"><span>触发关键词</span><textarea id="fixed-keywords" rows="3"></textarea></label>
+        </div>
+        <details class="advanced-settings">
+          <summary>高级设置</summary>
+          <label class="check-line"><input id="enabled" type="checkbox"><span>启用扫描</span></label>
+          <div class="form-row">
+            <span>精确坐标</span>
+            <div class="coord-grid">
+              <label>X1<input id="rect-left" type="number" min="0" max="1" step="0.001"></label>
+              <label>Y1<input id="rect-top" type="number" min="0" max="1" step="0.001"></label>
+              <label>X2<input id="rect-right" type="number" min="0" max="1" step="0.001"></label>
+              <label>Y2<input id="rect-bottom" type="number" min="0" max="1" step="0.001"></label>
+            </div>
+          </div>
+          <label id="parser-field" class="form-row compact"><span>数值格式</span><select id="parser"></select></label>
+          <div id="event-advanced">
+            <label class="form-row compact"><span>事件组</span><input id="region-group"></label>
+            <div class="form-row two compact">
+              <label><span>区域角色</span><select id="region-role"></select></label>
+              <label><span>玩法模式</span><select id="mode-tag"></select></label>
+            </div>
+            <label class="form-row compact"><span>开放内容</span><select id="event-tag"></select></label>
+          </div>
+        </details>
+      </div>
+      <footer class="review-footer">
+        <div id="message" class="message" role="status"></div>
+        <div class="actions">
+          <button id="exclude" class="button danger">排除</button>
+          <button id="pending" class="button quiet">暂存</button>
+          <button id="confirm" class="button primary">确认并下一项</button>
+        </div>
+        <div class="pager"><button id="previous" class="button quiet icon-button" title="上一项" aria-label="上一项">←</button><span id="position"></span><button id="next" class="button quiet icon-button" title="下一项" aria-label="下一项">→</button></div>
+      </footer>
+    </section>
+  </main>
+  <script src="/workspace-shell.js"></script>
+  <script src="/regions/app.js"></script>
+</body>
+</html>

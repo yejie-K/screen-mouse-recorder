@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/journey_run_preflight.schema.json",
+  "title": "历程长跑预检 v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "source", "selection", "workload"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "task_id": {"const": "JOURNEY_RUN_PREFLIGHT_V1"},
+    "source": {"type": "object"},
+    "selection": {"type": "object"},
+    "workload": {"type": "object"}
+  }
+}

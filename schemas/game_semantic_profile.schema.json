@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/game_semantic_profile.schema.json",
+  "title": "单游戏语义术语词典 v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "game_id", "game_name", "updated_at", "terms"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "game_id": {"type": "string", "minLength": 1},
+    "game_name": {"type": "string", "minLength": 1},
+    "updated_at": {"type": "string"},
+    "terms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["term", "normalized_term", "aliases", "mapping", "source_event_ids", "confirmed_by", "confirmed_at"],
+        "properties": {
+          "term": {"type": "string", "minLength": 1},
+          "normalized_term": {"type": "string", "minLength": 1},
+          "aliases": {"type": "array", "items": {"type": "string"}},
+          "mapping": {
+            "type": "object",
+            "required": ["event_category", "object_scope", "interaction_mode", "gameplay_form", "rhythm_category"],
+            "properties": {
+              "event_category": {"type": "string"},
+              "object_scope": {"type": "array", "items": {"type": "string"}},
+              "interaction_mode": {"type": "array", "items": {"type": "string"}},
+              "gameplay_form": {"type": "array", "items": {"type": "string"}},
+              "rhythm_category": {"type": "array", "items": {"type": "string"}},
+              "tags": {"type": "array", "maxItems": 2, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 32}},
+              "mode_tag": {"type": "string", "enum": ["PVE", "PVP", "GVG", "系统", "待判断"]},
+              "event_tag": {"type": "string", "enum": ["新玩法", "新副本", "新养成系统", "新技能", "新任务系统", "新社交功能", "新商业功能", "其他开放"]}
+            }
+          },
+          "source_event_ids": {"type": "array", "items": {"type": "string"}},
+          "confirmed_by": {"type": "string"},
+          "confirmed_at": {"type": "string"}
+        }
+      }
+    }
+  }
+}

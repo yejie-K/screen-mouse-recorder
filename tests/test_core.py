@@ -27,6 +27,11 @@ from screen_mouse_recorder.diagnostics.error_report import (
     write_error_report,
 )
 from screen_mouse_recorder.diagnostics.service import ErrorReporter
+from screen_mouse_recorder.event_extraction import (
+    OCREventExtractionConfig,
+    OCRTextItem,
+    extract_selected_ocr_events,
+)
 from screen_mouse_recorder.frame_sampler import (
     ClickKeyframeConfig,
     ClickMarker,
@@ -59,6 +64,7 @@ from screen_mouse_recorder.frame_export.ui_state import (
     build_frame_sampler_config_from_state,
     collect_dense_ranges,
 )
+from screen_mouse_recorder.frame_export.click_keyframes import build_click_keyframe_visual_signatures
 from screen_mouse_recorder.frame_export.progress import (
     completed_progress,
     failed_progress,
@@ -78,6 +84,130 @@ from screen_mouse_recorder.video_recorder import FFmpegRecorder
 
 
 class CoreSmokeTests(unittest.TestCase):
+    def test_manual_ocr_event_output_keeps_index_time_and_review_links(self) -> None:
+        class FakeOCREngine:
+            name = "fake-ocr"
+            version = "1.0"
+
+            def recognize(self, image_path: Path) -> tuple[list[OCRTextItem], float]:
+                if "000001" in image_path.name:
+                    return (
+                        [
+                            OCRTextItem("#022", 0.99, (5, 5, 50, 25)),
+                            OCRTextItem("00:01:45", 0.98, (5, 28, 90, 48)),
+                            OCRTextItem("单人BOSS", 0.97, (90, 180, 210, 215)),
+                            OCRTextItem("新功能开启", 0.99, (70, 230, 230, 270)),
+                            OCRTextItem("任务奖励", 0.96, (110, 320, 190, 345)),
+                        ],
+                        0.05,
+                    )
+                return (
+                    [
+                        OCRTextItem("#147", 0.99, (5, 5, 50, 25)),
+                        OCRTextItem("00:10:10", 0.98, (5, 28, 90, 48)),
+                        OCRTextItem("新技能解锁", 0.99, (70, 120, 230, 160)),
+                        OCRTextItem("大圣归来", 0.97, (100, 180, 200, 215)),
+                        OCRTextItem("技能效果", 0.96, (110, 250, 190, 275)),
+                    ],
+                    0.06,
+                )
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_one = root / "feature.png"
+            source_two = root / "skill.png"
+            Image.new("RGB", (300, 500), "#202020").save(source_one)
+            Image.new("RGB", (300, 500), "#303030").save(source_two)
+            index_path = root / "keyframes_click_sheet_index.json"
+            index_path.write_text(
+                json.dumps(
+                    {
+                        "frames": [
+                            {
+                                "index": 22,
+                                "seconds": 105.0,
+                                "timestamp": "00:01:45",
+                                "sheet": "keyframes_click_sheet.png",
+                                "sheet_row": 5,
+                                "sheet_col": 2,
+                            },
+                            {
+                                "index": 147,
+                                "seconds": 610.0,
+                                "timestamp": "00:10:10",
+                                "sheet": "keyframes_click_sheet.png",
+                                "sheet_row": 5,
+                                "sheet_col": 3,
+                            },
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            selection_path = root / "selected_ocr_tiles.json"
+            selection_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.0",
+                        "source_index": str(index_path),
+                        "selections": [
+                            {"tile_index": 22, "source_frame": str(source_one)},
+                            {"tile_index": 147, "source_frame": str(source_two)},
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            result = extract_selected_ocr_events(
+                OCREventExtractionConfig(
+                    index_json=index_path,
+                    selection_json=selection_path,
+                    output_dir=root / "ocr_events",
+                ),
+                engine=FakeOCREngine(),
+            )
+
+            payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+            selection_payload = json.loads(selection_path.read_text(encoding="utf-8"))
+            selection_schema = json.loads(
+                (ROOT / "schemas" / "selected_ocr_tiles.schema.json").read_text(encoding="utf-8")
+            )
+            result_schema = json.loads(
+                (ROOT / "schemas" / "event_ocr_results.schema.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(result.event_count, 2)
+            self.assertEqual(result.needs_review_count, 0)
+            self.assertTrue(set(selection_schema["required"]).issubset(selection_payload))
+            self.assertTrue(set(result_schema["required"]).issubset(payload))
+            self.assertTrue(set(result_schema["properties"]["source"]["required"]).issubset(payload["source"]))
+            self.assertTrue(set(result_schema["$defs"]["event"]["required"]).issubset(payload["events"][0]))
+            self.assertEqual(payload["source"]["ocr_engine"], "fake-ocr")
+            self.assertEqual(payload["events"][0]["event_type"], "new_feature_unlocked")
+            self.assertEqual(payload["events"][0]["event_name"], "单人BOSS")
+            self.assertEqual(payload["events"][0]["timestamp"], "00:01:45")
+            self.assertEqual(payload["events"][0]["time_source"], "index_json")
+            self.assertEqual(payload["events"][0]["time_check"], "matched")
+            self.assertEqual(payload["events"][1]["event_type"], "new_skill_unlocked")
+            self.assertEqual(payload["events"][1]["event_name"], "大圣归来")
+            self.assertTrue(Path(payload["events"][0]["source_frame"]).exists())
+            self.assertTrue(Path(payload["events"][0]["review_image"]).exists())
+            workbook = load_workbook(result.xlsx_path, read_only=True, data_only=True)
+            try:
+                self.assertEqual(workbook.active.max_row, 3)
+            finally:
+                workbook.close()
+
+    def test_error_report_has_ocr_codes(self) -> None:
+        self.assertEqual(build_error_report("ocr_input", ValueError("bad selection")).code, "OCR-INPUT-001")
+        self.assertEqual(build_error_report("ocr_run", RuntimeError("model failed")).code, "OCR-RUN-001")
+        self.assertEqual(
+            build_error_report("ocr_region_scan", RuntimeError("profile mismatch")).code,
+            "OCR-REGION-SCAN-001",
+        )
+
     def test_update_check_ignores_non_git_folder(self) -> None:
         with TemporaryDirectory() as directory:
             status = check_for_updates(Path(directory))
@@ -533,8 +663,33 @@ class CoreSmokeTests(unittest.TestCase):
 
             selected, skipped = select_click_keyframes(load_click_keyframe_events(config), config)
 
-        self.assertEqual([event.event_id for event in selected], ["evt_1", "evt_2"])
+        self.assertEqual([event.event_id for event in selected], ["evt_1", "evt_4"])
         self.assertEqual(skipped, 2)
+
+    def test_click_keyframe_cap_spans_the_full_timeline(self) -> None:
+        with TemporaryDirectory() as directory:
+            events_path = Path(directory) / "mouse_events.jsonl"
+            events_path.write_text(
+                "\n".join(
+                    json.dumps({"event_id": f"evt_{index}", "event_type": "click", "t_video_ms": index * 1000, "video_x": index})
+                    for index in range(1, 11)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config = ClickKeyframeConfig(
+                video_path=Path("recording.mp4"),
+                events_path=events_path,
+                output_dir=Path(directory),
+                max_frames=3,
+                time_dedupe_seconds=0,
+                distance_dedupe_px=0,
+            )
+
+            selection = select_click_keyframes_with_stats(load_click_keyframe_events(config), config)
+
+        self.assertEqual([event.event_id for event in selection.events], ["evt_1", "evt_5", "evt_10"])
+        self.assertEqual(selection.stats["cap_strategy"], "uniform_timeline")
 
     def test_click_keyframe_estimate_counts_selected_events_and_sheets(self) -> None:
         with TemporaryDirectory() as directory:
@@ -572,6 +727,49 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(estimate.events_kept, 2)
         self.assertEqual(estimate.events_skipped, 3)
         self.assertEqual(estimate.sheet_count, 2)
+        self.assertEqual(estimate.visual_signature_frames, 5)
+        self.assertEqual(estimate.cached_frame_reuses, 2)
+        self.assertEqual(estimate.estimated_frame_extractions, 5)
+
+    def test_visual_signature_frames_are_cached_for_sheet_reuse(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            events_path = root / "mouse_events.jsonl"
+            events_path.write_text(
+                "\n".join(
+                    json.dumps({"event_id": f"evt_{index}", "event_type": "click", "t_video_ms": 1000 + index * 100, "video_x": 20, "video_y": 20})
+                    for index in range(3)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config = ClickKeyframeConfig(
+                video_path=root / "recording.mp4",
+                events_path=events_path,
+                output_dir=root,
+                time_dedupe_seconds=1.0,
+                distance_dedupe_px=20,
+                visual_change_threshold=0.22,
+            )
+            events = load_click_keyframe_events(config)
+            cache: dict[str, Path] = {}
+            video = VideoInfo(config.video_path, duration_seconds=5, width=100, height=100, fps=30, file_size_bytes=100)
+            with patch(
+                "screen_mouse_recorder.frame_export.click_keyframes._extract_frame",
+                side_effect=lambda *_args: Image.new("RGB", (100, 100), "white"),
+            ):
+                signatures = build_click_keyframe_visual_signatures(
+                    events,
+                    config,
+                    video,
+                    "ffmpeg",
+                    frame_cache=cache,
+                    frame_cache_dir=root / "cache",
+                )
+
+            self.assertEqual(set(signatures), {"evt_0", "evt_1", "evt_2"})
+            self.assertEqual(set(cache), set(signatures))
+            self.assertTrue(all(path.is_file() for path in cache.values()))
 
     def test_run_frame_export_dispatches_by_config_type(self) -> None:
         interval_config = FrameSamplerConfig(video_path=Path("video.mp4"), output_dir=Path("out"))
@@ -623,6 +821,36 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(selection.stats["silent_gap_frames_added"], 2)
         self.assertEqual(selection.stats["timeline_max_gap_before_seconds"], 40)
         self.assertLess(selection.stats["timeline_max_gap_after_seconds"], 14)
+
+    def test_silent_gap_frames_respect_the_frame_cap(self) -> None:
+        with TemporaryDirectory() as directory:
+            events_path = Path(directory) / "mouse_events.jsonl"
+            events_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event_id": "a", "event_type": "click", "t_video_ms": 10000, "video_x": 10, "video_y": 10}),
+                        json.dumps({"event_id": "b", "event_type": "click", "t_video_ms": 50000, "video_x": 200, "video_y": 200}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config = ClickKeyframeConfig(
+                video_path=Path("recording.mp4"),
+                events_path=events_path,
+                output_dir=Path(directory),
+                max_frames=2,
+                time_dedupe_seconds=0,
+                distance_dedupe_px=0,
+                silent_gap_seconds=10,
+                silent_max_frames_per_gap=5,
+            )
+            video = VideoInfo(Path("recording.mp4"), duration_seconds=60, width=300, height=500, fps=30, file_size_bytes=1000)
+            selection = select_click_keyframes_with_stats(load_click_keyframe_events(config), config)
+            combined = _add_silent_gap_keyframes(selection.events, config, video, selection)
+
+        self.assertEqual([event.event_id for event in combined], ["a", "b"])
+        self.assertEqual(selection.stats["silent_gap_frames_added"], 0)
 
     def test_click_keyframes_can_include_double_click_and_paginate_plan(self) -> None:
         with TemporaryDirectory() as directory:

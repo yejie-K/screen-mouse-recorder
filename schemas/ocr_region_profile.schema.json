@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/ocr_region_profile.schema.json",
+  "title": "单游戏关键OCR区域 v1.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "game_id", "game_name", "status", "scan_scope", "source_frame", "regions", "review"],
+  "properties": {
+    "schema_version": {"const": "1.1"},
+    "game_id": {"type": "string", "minLength": 1},
+    "game_name": {"type": "string", "minLength": 1},
+    "status": {"enum": ["needs_review", "complete"]},
+    "scan_scope": {"const": "all_extracted_frames"},
+    "source_frame": {
+      "type": "object",
+      "required": ["width", "height"],
+      "properties": {
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1}
+      }
+    },
+    "regions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/region"}
+    },
+    "review": {
+      "type": "object",
+      "required": ["reviewer", "reviewed_at"],
+      "properties": {
+        "reviewer": {"type": "string"},
+        "reviewed_at": {"type": "string"}
+      }
+    },
+    "legacy_source": {"type": "object"}
+  },
+  "$defs": {
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["region_id", "region_kind", "rect_normalized", "scene_hint", "sample_texts", "sample_evidence", "status"],
+      "properties": {
+        "region_id": {"type": "string", "minLength": 1},
+        "region_kind": {"enum": ["metric", "event"]},
+        "rect_normalized": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "scene_hint": {"type": "string"},
+        "sample_texts": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
+        "sample_evidence": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
+        "manual_sample_ids": {"type": "array", "maxItems": 3, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "enabled": {"type": "boolean"},
+        "status": {"enum": ["needs_review", "confirmed", "excluded"]},
+        "metric_key": {"enum": ["combat_power", "level", "level_rebirth", "vip_level", "currency", "unknown"]},
+        "parser": {"enum": ["numeric_cn", "integer", "level_rebirth", "text"]},
+        "region_group_id": {"type": "string"},
+        "region_role": {"enum": ["trigger", "name", "auxiliary"]},
+        "fixed_keywords": {"type": "array", "items": {"type": "string"}},
+        "mode_tag": {"enum": ["PVE", "PVP", "GVG", "系统", "待判断"]},
+        "event_tag": {"enum": ["新玩法", "新副本", "新养成系统", "新技能", "新任务系统", "新社交功能", "新商业功能", "其他开放"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"region_kind": {"const": "metric"}}},
+          "then": {"required": ["metric_key", "parser"]}
+        },
+        {
+          "if": {"properties": {"region_kind": {"const": "event"}}},
+          "then": {"required": ["region_group_id", "region_role", "fixed_keywords", "mode_tag", "event_tag"]}
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>指标结果复核</title>
+  <link rel="stylesheet" href="/metrics/styles.css">
+  <link rel="stylesheet" href="/workspace-shell.css">
+</head>
+<body class="workspace-shell-body">
+  <header class="app-header workspace-shell-header">
+    <div class="workspace-shell-brand">
+      <span class="workspace-shell-brand__mark">历</span>
+      <div class="workspace-shell-brand__copy">
+        <strong>历程拆解</strong>
+        <span>Journey Review</span>
+      </div>
+    </div>
+    <nav class="workflow-nav workspace-shell-nav" aria-label="分析流程">
+      <a href="/manual/">人工选帧</a>
+      <a href="/regions/">区域校准</a>
+      <a href="/events/">功能事件</a>
+      <a class="active" href="/metrics/" aria-current="page">指标结果</a>
+    </nav>
+    <div class="workspace-shell-context">
+      <div class="workspace-shell-page">
+        <strong>指标结果复核</strong>
+        <select class="workspace-shell-session" aria-label="切换Session"><option>加载Session...</option></select>
+        <span id="session" hidden></span>
+      </div>
+      <label class="reviewer-field"><span>复核人</span><input id="reviewer" placeholder="必填"></label>
+    </div>
+  </header>
+
+  <div class="toolbar workspace-shell-toolbar">
+    <div class="filter-group" role="tablist" aria-label="结果筛选">
+      <button class="filter active" data-filter="pending">待复核</button>
+      <button class="filter" data-filter="flagged">重点核对</button>
+      <button class="filter" data-filter="confirmed">已确认</button>
+      <button class="filter" data-filter="excluded">已排除</button>
+      <button class="filter" data-filter="all">全部</button>
+    </div>
+    <input id="search" class="search" type="search" placeholder="搜索时间、OCR文字或指标">
+    <button id="bulk-confirm" class="button secondary">确认当前可用项</button>
+    <div id="summary" class="summary workspace-shell-summary"></div>
+  </div>
+
+  <main class="workspace workspace-shell-main">
+    <aside class="metric-pane">
+      <div id="metric-count" class="pane-heading"></div>
+      <div id="metric-list"></div>
+    </aside>
+
+    <section class="evidence-pane">
+      <div class="metric-heading">
+        <div><div id="metric-kicker" class="kicker"></div><h2 id="metric-title">选择一个指标</h2></div>
+        <span id="metric-status" class="status-badge"></span>
+      </div>
+      <div id="flags" class="flags"></div>
+      <figure class="evidence-stage">
+        <img id="evidence-image" alt="指标证据帧">
+        <div id="evidence-empty" class="empty">没有可用证据图</div>
+      </figure>
+      <dl class="facts">
+        <div><dt>视频时间</dt><dd id="time"></dd></div>
+        <div><dt>命中帧</dt><dd id="frames"></dd></div>
+        <div><dt>置信度</dt><dd id="confidence"></dd></div>
+        <div><dt>区域</dt><dd id="region"></dd></div>
+      </dl>
+      <section class="ocr-block"><h3>OCR原文</h3><p id="ocr-text"></p></section>
+    </section>
+
+    <section class="review-pane">
+      <div class="review-scroll">
+        <label class="form-row"><span>指标类型</span><select id="metric-key"></select></label>
+        <label class="form-row"><span>确认值</span><input id="parsed-value" autocomplete="off"></label>
+        <div id="level-fields" class="form-row two">
+          <label><span>转生</span><input id="rebirth" type="number" min="0" step="1"></label>
+          <label><span>等级</span><input id="level" type="number" min="0" step="1"></label>
+        </div>
+        <label class="form-row"><span>单位</span><input id="unit" autocomplete="off"></label>
+        <div class="original-value">
+          <span>算法解析</span>
+          <strong id="original-value"></strong>
+        </div>
+        <label class="form-row"><span>复核备注</span><textarea id="review-note" rows="5" placeholder="记录修正或排除原因"></textarea></label>
+      </div>
+      <footer class="review-footer">
+        <div id="message" class="message" role="status"></div>
+        <div class="actions">
+          <button id="pending" class="button quiet">保留待复核</button>
+          <button id="exclude" class="button danger">排除</button>
+          <button id="confirm" class="button primary">确认指标</button>
+        </div>
+        <div class="pager">
+          <button id="previous" class="button quiet">上一条</button>
+          <span id="position"></span>
+          <button id="next" class="button quiet">下一条</button>
+        </div>
+      </footer>
+    </section>
+  </main>
+  <script src="/workspace-shell.js"></script>
+  <script src="/metrics/app.js"></script>
+</body>
+</html>

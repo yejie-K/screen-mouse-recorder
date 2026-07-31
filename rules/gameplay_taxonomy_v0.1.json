@@ -1,0 +1,198 @@
+{
+  "schema_version": "1.0",
+  "rule_set_id": "gameplay_taxonomy_v0.1",
+  "dimensions": {
+    "event_category": [
+      "玩法开放",
+      "技能开放",
+      "成长反馈",
+      "奖励反馈",
+      "任务推进",
+      "界面操作",
+      "其他"
+    ],
+    "object_scope": [
+      "角色",
+      "伙伴",
+      "坐骑",
+      "装备",
+      "任务",
+      "帮会",
+      "社交",
+      "跨服",
+      "商业化",
+      "通用系统",
+      "未知"
+    ],
+    "interaction_mode": [
+      "PVE",
+      "PVP",
+      "GVG",
+      "社交",
+      "养成",
+      "功能",
+      "未知"
+    ],
+    "gameplay_form": [
+      "副本",
+      "BOSS",
+      "技能",
+      "日常",
+      "排行榜",
+      "聊天",
+      "邮箱",
+      "组队",
+      "养成系统",
+      "活动",
+      "商业化入口",
+      "通用功能",
+      "未知"
+    ],
+    "rhythm_category": [
+      "核心循环（爆点）",
+      "PVE",
+      "PVP",
+      "日常任务",
+      "竞技",
+      "帮会",
+      "异步社交",
+      "同步社交",
+      "其他"
+    ]
+  },
+  "rules": [
+    {
+      "rule_id": "GAME-EVENT-FEATURE",
+      "priority": 10,
+      "match": {"event_types": ["new_feature_unlocked"], "keywords": []},
+      "labels": {"event_category": "玩法开放"},
+      "notes": "新功能开放只确定事件性质，具体玩法维度继续由关键词规则和AI语义补全。"
+    },
+    {
+      "rule_id": "GAME-EVENT-SKILL",
+      "priority": 10,
+      "match": {"event_types": ["new_skill_unlocked"], "keywords": []},
+      "labels": {"event_category": "技能开放", "object_scope": ["角色"], "interaction_mode": ["养成"], "gameplay_form": ["技能"]},
+      "notes": "技能开放默认归入角色成长，但具体技能归属仍可人工修正。"
+    },
+    {
+      "rule_id": "GAME-EVENT-LEVEL",
+      "priority": 10,
+      "match": {"event_types": ["level_snapshot"], "keywords": []},
+      "labels": {"event_category": "成长反馈", "object_scope": ["角色"], "interaction_mode": ["养成"], "gameplay_form": ["养成系统"]},
+      "notes": "等级观察只表示成长节点。"
+    },
+    {
+      "rule_id": "GAME-EVENT-POWER",
+      "priority": 10,
+      "match": {"event_types": ["combat_power_snapshot"], "keywords": []},
+      "labels": {"event_category": "成长反馈", "object_scope": ["角色"], "interaction_mode": ["养成"], "gameplay_form": ["养成系统"]},
+      "notes": "战力数值必须经过固定区域或人工复核后才能进入正式增长曲线。"
+    },
+    {
+      "rule_id": "GAME-SCOPE-PARTNER",
+      "priority": 30,
+      "match": {"event_types": [], "keywords": ["伙伴", "宠物", "随从", "幻灵"]},
+      "labels": {"object_scope": ["伙伴"]},
+      "notes": "伙伴相关系统或玩法。"
+    },
+    {
+      "rule_id": "GAME-SCOPE-MOUNT",
+      "priority": 30,
+      "match": {"event_types": [], "keywords": ["坐骑", "骑宠"]},
+      "labels": {"object_scope": ["坐骑"]},
+      "notes": "坐骑相关系统或玩法。"
+    },
+    {
+      "rule_id": "GAME-PVE-BOSS",
+      "priority": 40,
+      "match": {"event_types": [], "keywords": ["BOSS", "首领", "魔王"]},
+      "labels": {"interaction_mode": ["PVE"], "gameplay_form": ["BOSS"], "rhythm_category": ["PVE"]},
+      "notes": "BOSS默认作为PVE候选，世界首领或跨服首领后续可增加范围标签。"
+    },
+    {
+      "rule_id": "GAME-PVE-DUNGEON",
+      "priority": 40,
+      "match": {"event_types": [], "keywords": ["副本", "秘境", "试炼", "历练"]},
+      "labels": {"interaction_mode": ["PVE"], "gameplay_form": ["副本"], "rhythm_category": ["PVE"]},
+      "notes": "副本、秘境和试炼默认作为PVE候选。"
+    },
+    {
+      "rule_id": "GAME-PVP",
+      "priority": 50,
+      "match": {"event_types": [], "keywords": ["PVP", "跨服对战", "玩家对战"]},
+      "labels": {"interaction_mode": ["PVP"], "rhythm_category": ["PVP"]},
+      "notes": "个人或小队玩家对抗。"
+    },
+    {
+      "rule_id": "GAME-GVG",
+      "priority": 50,
+      "match": {"event_types": [], "keywords": ["帮战", "公会战", "帮会战", "城战", "GVG"]},
+      "labels": {"object_scope": ["帮会"], "interaction_mode": ["GVG"], "rhythm_category": ["帮会"]},
+      "notes": "组织对组织玩法。"
+    },
+    {
+      "rule_id": "GAME-SOCIAL-CHAT",
+      "priority": 50,
+      "match": {"event_types": [], "keywords": ["聊天", "世界频道", "私聊"]},
+      "labels": {"object_scope": ["社交"], "interaction_mode": ["社交"], "gameplay_form": ["聊天"], "rhythm_category": ["同步社交"]},
+      "notes": "聊天属于社交功能，不等同于深度社交玩法。"
+    },
+    {
+      "rule_id": "GAME-SOCIAL-FRIEND",
+      "priority": 50,
+      "match": {"event_types": [], "keywords": ["好友", "结拜", "师徒", "情缘"]},
+      "labels": {"object_scope": ["社交"], "interaction_mode": ["社交"], "rhythm_category": ["异步社交"]},
+      "notes": "好友和关系链功能默认作为异步社交候选。"
+    },
+    {
+      "rule_id": "GAME-SYSTEM-MAIL",
+      "priority": 50,
+      "match": {"event_types": [], "keywords": ["邮箱", "邮件"]},
+      "labels": {"object_scope": ["通用系统"], "interaction_mode": ["功能"], "gameplay_form": ["邮箱"], "rhythm_category": ["异步社交"]},
+      "notes": "邮箱通常为功能开放，默认不视为深度玩法。"
+    },
+    {
+      "rule_id": "GAME-SYSTEM-GROWTH",
+      "priority": 30,
+      "match": {"event_types": [], "keywords": ["宝石", "仙术", "仙品", "强化", "升星", "进阶"]},
+      "labels": {"object_scope": ["角色"], "interaction_mode": ["养成"], "gameplay_form": ["养成系统"], "rhythm_category": ["核心循环（爆点）"]},
+      "notes": "角色成长系统候选。"
+    },
+    {
+      "rule_id": "GAME-COMMERCIAL",
+      "priority": 60,
+      "match": {"event_types": [], "keywords": ["充值", "首充", "月卡", "战令", "VIP", "礼包商城"]},
+      "labels": {"object_scope": ["商业化"], "interaction_mode": ["功能"], "gameplay_form": ["商业化入口"]},
+      "notes": "商业化节点必须与普通奖励弹窗区分。"
+    },
+    {
+      "rule_id": "GAME-RHYTHM-CORE",
+      "priority": 35,
+      "match": {"event_types": ["new_feature_unlocked"], "keywords": ["仙术", "伙伴", "宝石", "仙品", "角色养成", "装备强化"]},
+      "labels": {"rhythm_category": ["核心循环（爆点）"]},
+      "notes": "早期直接支撑角色成长与战斗反馈的核心系统候选。"
+    },
+    {
+      "rule_id": "GAME-RHYTHM-DAILY",
+      "priority": 55,
+      "match": {"event_types": [], "keywords": ["每日", "日常", "委托", "悬赏"]},
+      "labels": {"gameplay_form": ["日常"], "rhythm_category": ["日常任务"]},
+      "notes": "每日重复任务与委托。"
+    },
+    {
+      "rule_id": "GAME-RHYTHM-COMPETITIVE",
+      "priority": 60,
+      "match": {"event_types": [], "keywords": ["竞技场", "擂台", "论剑", "排位", "排行榜"]},
+      "labels": {"interaction_mode": ["PVP"], "gameplay_form": ["排行榜"], "rhythm_category": ["竞技"]},
+      "notes": "竞技、排位和排行榜目标。"
+    },
+    {
+      "rule_id": "GAME-RHYTHM-SYNC-SOCIAL",
+      "priority": 60,
+      "match": {"event_types": [], "keywords": ["组队", "实时组队", "语音", "多人协作"]},
+      "labels": {"object_scope": ["社交"], "interaction_mode": ["社交"], "gameplay_form": ["组队"], "rhythm_category": ["同步社交"]},
+      "notes": "需要玩家同时在线互动的社交行为。"
+    }
+  ]
+}

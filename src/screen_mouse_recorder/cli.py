@@ -13,6 +13,8 @@ from typing import Any
 from . import __version__
 from .app import main as app_main
 from .config import AppConfig
+from .diagnostics.service import ErrorReporter
+from .event_extraction import OCREventExtractionConfig, extract_selected_ocr_events
 from .frame_sampler import (
     CropRegion,
     FrameSamplerConfig,
@@ -93,6 +95,14 @@ def main(argv: list[str] | None = None) -> int:
     sample_parser.add_argument("--crop", default="", help="Optional crop x,y,w,h")
     sample_parser.add_argument("--estimate-only", action="store_true")
 
+    ocr_parser = subparsers.add_parser("ocr-events", help="OCR manually selected keyframes into event files.")
+    ocr_parser.add_argument("selection", type=Path, help="Path to selected_ocr_tiles.json")
+    ocr_parser.add_argument("--index", type=Path, help="Path to keyframes_click_sheet_index.json")
+    ocr_parser.add_argument("--video", type=Path, help="Source recording.mp4; optional when source_frame is provided")
+    ocr_parser.add_argument("--output-dir", type=Path)
+    ocr_parser.add_argument("--no-review-images", action="store_true")
+    ocr_parser.add_argument("--json-progress", action="store_true", help="Emit one JSON progress object per line")
+
     args = parser.parse_args(argv)
     command = args.command or "app"
     base_dir: Path = args.base_dir.resolve()
@@ -115,6 +125,8 @@ def main(argv: list[str] | None = None) -> int:
         return selftest_pause(base_dir, args.segment_seconds, args.pause_seconds)
     if command == "sample-frames":
         return sample_frames(base_dir, args)
+    if command == "ocr-events":
+        return ocr_events(base_dir, args)
     parser.error(f"Unknown command: {command}")
     return 2
 
@@ -265,6 +277,92 @@ def sample_frames(base_dir: Path, args: argparse.Namespace) -> int:
     print(f"saved: {result.output_dir}")
     print(f"report: {result.report_html}")
     return 0
+
+
+def ocr_events(base_dir: Path, args: argparse.Namespace) -> int:
+    selection_path = args.selection.resolve()
+    reporter = ErrorReporter(base_dir)
+    try:
+        index_path = args.index.resolve() if args.index else _index_path_from_selection(selection_path)
+        output_dir = args.output_dir.resolve() if args.output_dir else selection_path.parent / "ocr_events"
+        app_config = AppConfig.load(base_dir / "config.json")
+        config = OCREventExtractionConfig(
+            index_json=index_path,
+            selection_json=selection_path,
+            output_dir=output_dir,
+            video_path=args.video.resolve() if args.video else None,
+            ffmpeg_path=app_config.ffmpeg_path,
+            write_review_images=not args.no_review_images,
+        )
+    except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        report = reporter.create(
+            "ocr_input",
+            exc,
+            {"selection_json": selection_path, "index_json": args.index or ""},
+        )
+        print(f"ocr-events failed [{report.report.code}]: {exc}", file=sys.stderr)
+        if report.txt_path:
+            print(f"error report: {report.txt_path}", file=sys.stderr)
+        return 1
+
+    def progress(done: int, total: int, message: str) -> None:
+        if args.json_progress:
+            print(
+                json.dumps(
+                    {
+                        "stage": "completed" if total > 0 and done >= total else "ocr",
+                        "current": done,
+                        "total": total,
+                        "message": message,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+        else:
+            print(f"[{done}/{total}] {message}")
+
+    try:
+        result = extract_selected_ocr_events(config, progress=progress)
+    except Exception as exc:
+        report = reporter.create(
+            "ocr_run",
+            exc,
+            {
+                "selection_json": selection_path,
+                "index_json": index_path,
+                "video": config.video_path or "",
+                "output_dir": config.output_dir,
+            },
+        )
+        print(f"ocr-events failed [{report.report.code}]: {exc}", file=sys.stderr)
+        if report.txt_path:
+            print(f"error report: {report.txt_path}", file=sys.stderr)
+        return 1
+    summary = {
+        "events": result.event_count,
+        "needs_review": result.needs_review_count,
+        "elapsed_seconds": result.elapsed_seconds,
+        "json": str(result.json_path),
+        "xlsx": str(result.xlsx_path),
+        "review_dir": str(result.review_dir),
+    }
+    if args.json_progress:
+        print(json.dumps({"stage": "result", **summary}, ensure_ascii=False, separators=(",", ":")))
+    else:
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _index_path_from_selection(selection_path: Path) -> Path:
+    if not selection_path.exists():
+        raise FileNotFoundError(selection_path)
+    data = json.loads(selection_path.read_text(encoding="utf-8-sig"))
+    value = data.get("source_index") if isinstance(data, dict) else None
+    if not value:
+        raise ValueError("Selection JSON must contain source_index when --index is omitted.")
+    path = Path(str(value))
+    return path.resolve() if path.is_absolute() else (selection_path.parent / path).resolve()
 
 
 def _parse_crop(value: str) -> CropRegion | None:

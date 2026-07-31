@@ -81,6 +81,21 @@ ERROR_DEFINITIONS: dict[str, ErrorDefinition] = {
         "生成合成图、索引或预览页时失败。",
         "检查输出目录可写、磁盘空间充足，并确认视频和事件文件未被移动。",
     ),
+    "OCR-INPUT-001": ErrorDefinition(
+        "OCR 输入无效",
+        "人工选帧文件、抽帧索引、原始视频或图片路径不完整。",
+        "检查 selected_ocr_tiles.json、keyframes_click_sheet_index.json 和视频/原图路径。",
+    ),
+    "OCR-RUN-001": ErrorDefinition(
+        "关键帧 OCR 失败",
+        "OCR 模型未安装、识别失败，或事件结果文件无法写入。",
+        "检查 OCR 可选依赖、输入图片、输出目录权限和错误报告中的技术信息。",
+    ),
+    "OCR-REGION-SCAN-001": ErrorDefinition(
+        "区域 OCR 扫描失败",
+        "确认区域无法应用到抽帧原图，或全抽帧局部 OCR 在读取、识别、解析或写入时失败。",
+        "检查区域 profile 是否已人工确认、抽帧索引和原始视频是否匹配，并核对分辨率与 OCR 依赖。",
+    ),
     "UPD-APPLY-001": ErrorDefinition(
         "自动更新失败",
         "软件检查或执行 GitHub 更新时失败。",
@@ -109,6 +124,9 @@ STAGE_TO_CODE: dict[str, str] = {
     "frame_preview": "FRM-PREVIEW-001",
     "frame_estimate": "FRM-ESTIMATE-001",
     "frame_export": "FRM-EXPORT-001",
+    "ocr_input": "OCR-INPUT-001",
+    "ocr_run": "OCR-RUN-001",
+    "ocr_region_scan": "OCR-REGION-SCAN-001",
     "update_apply": "UPD-APPLY-001",
     "app_restart": "APP-RESTART-001",
 }

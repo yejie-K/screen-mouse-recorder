@@ -15,6 +15,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ocr = [
+    "rapidocr-onnxruntime==1.4.4; python_version < '3.13'",
+]
 dev = [
     "pytest>=7.4",
     "ruff>=0.5",

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/journey_workspace.schema.json",
+  "title": "历程拆解统一工作空间 v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "status", "created_at", "session", "source", "artifacts", "stages", "updated_at"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "task_id": {"const": "JOURNEY_WORKSPACE_V1"},
+    "status": {"enum": ["initialized", "in_progress", "ready_for_final", "complete"]},
+    "created_at": {"type": "string", "minLength": 1},
+    "updated_at": {"type": "string", "minLength": 1},
+    "session": {
+      "type": "object",
+      "required": ["session_id", "game_id", "game_name", "duration_ms", "frame_count", "sheet_count"],
+      "properties": {
+        "session_id": {"type": "string", "minLength": 1},
+        "game_id": {"type": "string", "minLength": 1},
+        "game_name": {"type": "string", "minLength": 1},
+        "duration_ms": {"type": "integer", "minimum": 1},
+        "frame_count": {"type": "integer", "minimum": 1},
+        "sheet_count": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "source": {"type": "object"},
+    "artifacts": {"type": "object"},
+    "stages": {"type": "object"}
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.screen-capture/journey_preview_manifest.schema.json",
+  "title": "游戏历程拆解候选预览清单 v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "status", "created_at", "session", "warning", "inputs", "outputs"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "task_id": {"const": "JOURNEY_PREVIEW_PRODUCT_V1"},
+    "status": {"const": "draft"},
+    "created_at": {"type": "string", "minLength": 1},
+    "session": {"type": "object"},
+    "warning": {"type": "string", "minLength": 1},
+    "inputs": {"type": "object"},
+    "outputs": {"type": "object"}
+  }
+}
